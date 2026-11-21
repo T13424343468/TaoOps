@@ -1,2 +1,0 @@
-obj/Release/net10.0/proto/Agent.cs \
-obj/Release/net10.0/proto/AgentGrpc.cs: ../proto/agent.proto
