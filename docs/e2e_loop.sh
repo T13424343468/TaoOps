@@ -14,8 +14,9 @@ mkdir -p $LOG
 cleanup() { [ -n "${SERVER_PID:-}" ] && kill $SERVER_PID 2>/dev/null; [ -n "${AGENT_PID:-}" ] && kill $AGENT_PID 2>/dev/null; }
 trap cleanup EXIT
 
-# 1. 起中控（gRPC 需 HTTP/2 明文：Kestrel 开 h2c）
+# 1. 起中控（gRPC 需 HTTP/2 明文：Kestrel 开 h2c；M2 起明文须显式 TAOOPS_INSECURE=1）
 cd $SRC/server
+export TAOOPS_INSECURE=1
 export ASPNETCORE_Kestrel__EndpointDefaults__Protocols="Http2"
 dotnet run -c Release --no-build --urls "http://127.0.0.1:$PORT" > $LOG/server.log 2>&1 &
 SERVER_PID=$!
@@ -23,7 +24,7 @@ for i in $(seq 1 30); do
   curl -s --http2-prior-knowledge "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && break
   sleep 0.5
 done
-curl -s --http2-prior-knowledge "http://127.0.0.1:$PORT/" 2>/dev/null | grep -q "TaoOps Server M1" || { echo "FAIL: server not up"; cat $LOG/server.log; exit 1; }
+curl -s --http2-prior-knowledge "http://127.0.0.1:$PORT/" 2>/dev/null | grep -q "TaoOps Server" || { echo "FAIL: server not up"; cat $LOG/server.log; exit 1; }
 echo "[1/7] server up"
 
 # 2. 起 Agent（gRPC 明文 http；模块目录指向临时目录）

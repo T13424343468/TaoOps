@@ -4,12 +4,14 @@ package modules
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"taoops/agent/internal/modules/backup"
 	"taoops/agent/internal/modules/cron"
 	"taoops/agent/internal/modules/db"
 	"taoops/agent/internal/modules/env"
 	"taoops/agent/internal/modules/files"
+	"taoops/agent/internal/modules/ftp"
 	"taoops/agent/internal/modules/fw"
 	"taoops/agent/internal/modules/registry"
 	"taoops/agent/internal/modules/site"
@@ -42,6 +44,7 @@ func RegisterAll(r *registry.Registry, p Paths) error {
 		{"cron", func() error { return cron.Register(r, cron.NewManager(p.LogDir)) }},
 		{"env", func() error { return env.Register(r, env.NewManager(p.PackageDir, p.InstallDir)) }},
 		{"fw", func() error { return fw.Register(r, fw.NewManager(p.AuditPath)) }},
+		{"ftp", func() error { return ftp.Register(r, ftp.NewManager(filepath.Join(p.ConfDir, "ftp.json"))) }},
 		{"backup", func() error { return backup.Register(r, backup.NewManager(p.BackupDir)) }},
 	}
 	for _, s := range steps {

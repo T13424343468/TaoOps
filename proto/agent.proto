@@ -11,6 +11,10 @@ service AgentService {
   rpc Heartbeat(stream HeartbeatMsg) returns (stream HeartbeatAck);
   rpc Dispatch(DispatchRequest) returns (DispatchResult);
   rpc CommandStream(stream DispatchResult) returns (stream DispatchRequest);
+  // 终端双向流（M2）：Agent 发送终端输出、接收键盘输入；字节流，方向无关。
+  rpc TermStream(stream TermData) returns (stream TermData);
+  // 日志流（M2）：Agent 发送日志块，接收订阅控制（中控按控制台请求转发）。
+  rpc LogStream(stream LogChunk) returns (stream LogControl);
 }
 
 message RegisterRequest {
@@ -56,4 +60,25 @@ message DispatchResult {
   int32 exit_code = 1;
   string output = 2;
   string request_id = 3;
+}
+
+// 终端双向流（M2）：Agent 发送终端输出、接收键盘输入；字节流，方向无关。
+message TermData {
+  string node_id = 1;
+  string session_id = 2;
+  bytes data = 3;
+}
+
+// 日志块（M2）：Agent 推送的增量日志。
+message LogChunk {
+  string node_id = 1;
+  bytes data = 2;
+  int64 ts = 3;
+}
+
+// 日志订阅控制（M2）：中控下发给 Agent 的订阅/退订指令。
+message LogControl {
+  string action = 1;
+  string path = 2;
+  int32 tail_lines = 3;
 }

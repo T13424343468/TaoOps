@@ -43,7 +43,7 @@ public class AgentServiceDispatchTests
     {
         var registry = new NodeRegistry();
         var hub = new NodeCommandHub();
-        var service = new Services.AgentService(registry, hub, NullLogger<Services.AgentService>.Instance);
+        var service = new Services.AgentService(registry, hub, new NodeStreamHub(), NullLogger<Services.AgentService>.Instance);
         return (service, registry, hub);
     }
 

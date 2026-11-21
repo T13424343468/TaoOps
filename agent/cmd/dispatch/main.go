@@ -1,5 +1,6 @@
 // 一次性 E2E 客户端：对中控下发指令并断言回传结果。
 // 用法：dispatch <addr> <node_id> [command [args...]]；command 默认 echo。
+// 传输层：TAOOPS_INSECURE=1 走明文（仅本地回环），否则 TLS+TOFU（契约 §1）。
 package main
 
 import (
@@ -10,7 +11,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"taoops/agent/internal/agent"
 	pb "taoops/agent/pb"
 )
 
@@ -27,7 +28,12 @@ func main() {
 		args = os.Args[4:]
 	}
 
-	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	creds, err := agent.DialCredentials(addr)
+	if err != nil {
+		fmt.Println("FAIL: credentials", err)
+		os.Exit(1)
+	}
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
 	if err != nil {
 		fmt.Println("FAIL: dial", err)
 		os.Exit(1)

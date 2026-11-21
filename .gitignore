@@ -3,3 +3,4 @@ obj/
 *.user
 server/tests/bin/
 server/tests/obj/
+.nfs*

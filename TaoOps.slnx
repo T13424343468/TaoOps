@@ -5,4 +5,7 @@
   <Folder Name="/server/tests/">
     <Project Path="server/tests/TaoOps.Server.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/wsprobe/">
+    <Project Path="tools/wsprobe/wsprobe.csproj" />
+  </Folder>
 </Solution>

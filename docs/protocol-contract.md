@@ -1,16 +1,17 @@
-# TaoOps 通信契约 v1（M1）
+# TaoOps 通信契约 v1（M2）
 
-> 状态：基线冻结（2026-11-21，随 PRD v1.1 冻结）。本文档是 proto 的单一来源说明；改协议先改本文档再改 `src/proto/`。
+> 状态：基线冻结（2026-11-21，随 PRD v1.1 冻结）；M2 增补 TLS/TOFU、终端与日志流（2026-11-22）。本文档是 proto 的单一来源说明；改协议先改本文档再改 `src/proto/`。
 > 方向：Agent 主动外连中控（产品不依赖云端，内网/离线友好）。
 
 ## 1. 传输层
 
 | 通道 | 用途 | 说明 |
 |---|---|---|
-| gRPC (HTTP/2 + TLS) | 注册、心跳、指令下发 | 双向流 `AgentService` |
-| WebSocket (wss) | 终端、实时日志流 | M1 仅预留路径 `/ws/agent/{node_id}`，M2 启用 |
+| gRPC (HTTP/2 + TLS) | 注册、心跳、指令下发、终端流、日志流 | 双向流 `AgentService` |
+| WebSocket | 终端、实时日志流（中控 Web 控制台侧入口） | `/ws/agent/{node_id}/terminal`、`/ws/agent/{node_id}/logs?path=&tail=` |
 
-- TLS：中控自签证书；Agent 首次连接记录证书指纹（SHA-256），人工确认后固化（TOFU）。指纹不匹配即拒绝连接并告警。
+- **TLS（M2 起默认）**：中控首次启动自签发长期证书（RSA-2048，有效期 10 年，含 SAN localhost/127.0.0.1），PFX 落数据目录（`TAOOPS_DATA_DIR`，默认 `/var/lib/taoops/server`），不依赖外部 CA——自托管无服务器定位。`TAOOPS_INSECURE=1` 仅保留给本地回环测试（明文 h2c）。
+- **TOFU（Agent 侧）**：Agent 首次连接记录中控证书 SHA-256 指纹到固化文件（`TAOOPS_KNOWN_HOSTS`，默认 `~/.taoops/known_hosts`，格式 `host fingerprint` 每行一条）；此后每次连接校验，**不匹配立即拒绝连接**并输出 `fingerprint mismatch` 告警。中控换证书需管理员删除固化条目后重新确认。
 - 心跳间隔：15 秒（`HeartbeatIntervalMs = 15000`，常量集中定义）。
 - 断链重连：指数退避，初始 1s，倍增，上限 60s；成功注册后重置。
 
@@ -22,6 +23,10 @@ service AgentService {
   rpc Heartbeat(stream HeartbeatMsg) returns (stream HeartbeatAck);
   rpc Dispatch(DispatchRequest) returns (DispatchResult);
   rpc CommandStream(stream DispatchResult) returns (stream DispatchRequest);
+  // 终端双向流（M2）：Agent 发送终端输出、接收键盘输入；字节流，方向无关。
+  rpc TermStream(stream TermData) returns (stream TermData);
+  // 日志流（M2）：Agent 发送日志块，接收订阅控制（中控按控制台请求转发）。
+  rpc LogStream(stream LogChunk) returns (stream LogControl);
 }
 
 message RegisterRequest {
@@ -59,6 +64,24 @@ message DispatchResult {
   string output    = 2; // stdout+stderr 合并，上限 1MB 截断
   string request_id = 3; // 对应 DispatchRequest.request_id
 }
+
+message TermData {
+  string node_id   = 1; // Agent 侧填充
+  string session_id = 2; // 终端会话 ID；Agent 生成，中控按其路由
+  bytes  data      = 3; // 终端输入/输出字节
+}
+
+message LogChunk {
+  string node_id = 1;
+  bytes  data    = 2; // 新增日志字节
+  int64  ts      = 3; // Unix 毫秒
+}
+
+message LogControl {
+  string action     = 1; // subscribe | unsubscribe
+  string path       = 2; // 日志文件绝对路径
+  int32  tail_lines = 3; // 订阅时回放的尾部行数，默认 0
+}
 ```
 
 ## 3. 错误码
@@ -74,7 +97,7 @@ message DispatchResult {
 ## 4. 指令白名单与执行路径（M1）
 
 - **Shell 白名单**：`echo`、`uname`、`df`、`free`、`uptime`。中控侧校验命令与参数（禁止 `;`、`|`、`&&`、反引号、`$(`）；白名单外一律 INVALID_ARGUMENT。
-- **模块命令白名单**：`sysinfo.overview`、`site.manage`、`db.manage`、`files.manage`、`term.manage`、`cron.manage`、`env.manage`、`fw.manage`、`backup.manage`。模块命令的 `args` 采用 `key=value` 形式传入，Agent 侧还原为 `map[string]any`（无 `=` 的项忽略）。
+- **模块命令白名单**：`sysinfo.overview`、`site.manage`、`db.manage`、`files.manage`、`term.manage`、`cron.manage`、`env.manage`、`fw.manage`、`backup.manage`、`ftp.manage`（M2，FR-A8）。模块命令的 `args` 采用 `key=value` 形式传入，Agent 侧还原为 `map[string]any`（无 `=` 的项忽略）。
 - **执行路径**：中控 Dispatch 校验通过后，经 `CommandStream` 双向流转发到目标节点，由 Agent 侧统一分发器执行（模块命令走模块注册表，Shell 命令直接 exec、不经 shell），结果按 `request_id` 回传。中控在超时上限内等待；节点命令通道未连接返回 UNAVAILABLE。
 - M2 起改为按节点授权的命令集。
 

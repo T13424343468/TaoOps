@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.5.1
 // - protoc             v5.27.3
-// source: agent.proto
+// source: proto/agent.proto
 
 package pb
 
@@ -23,6 +23,8 @@ const (
 	AgentService_Heartbeat_FullMethodName     = "/taoops.v1.AgentService/Heartbeat"
 	AgentService_Dispatch_FullMethodName      = "/taoops.v1.AgentService/Dispatch"
 	AgentService_CommandStream_FullMethodName = "/taoops.v1.AgentService/CommandStream"
+	AgentService_TermStream_FullMethodName    = "/taoops.v1.AgentService/TermStream"
+	AgentService_LogStream_FullMethodName     = "/taoops.v1.AgentService/LogStream"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -35,6 +37,10 @@ type AgentServiceClient interface {
 	Heartbeat(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[HeartbeatMsg, HeartbeatAck], error)
 	Dispatch(ctx context.Context, in *DispatchRequest, opts ...grpc.CallOption) (*DispatchResult, error)
 	CommandStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DispatchResult, DispatchRequest], error)
+	// 终端双向流（M2）：Agent 发送终端输出、接收键盘输入；字节流，方向无关。
+	TermStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TermData, TermData], error)
+	// 日志流（M2）：Agent 发送日志块，接收订阅控制（中控按控制台请求转发）。
+	LogStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LogChunk, LogControl], error)
 }
 
 type agentServiceClient struct {
@@ -91,6 +97,32 @@ func (c *agentServiceClient) CommandStream(ctx context.Context, opts ...grpc.Cal
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentService_CommandStreamClient = grpc.BidiStreamingClient[DispatchResult, DispatchRequest]
 
+func (c *agentServiceClient) TermStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TermData, TermData], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[2], AgentService_TermStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[TermData, TermData]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_TermStreamClient = grpc.BidiStreamingClient[TermData, TermData]
+
+func (c *agentServiceClient) LogStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LogChunk, LogControl], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[3], AgentService_LogStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[LogChunk, LogControl]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_LogStreamClient = grpc.BidiStreamingClient[LogChunk, LogControl]
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -101,6 +133,10 @@ type AgentServiceServer interface {
 	Heartbeat(grpc.BidiStreamingServer[HeartbeatMsg, HeartbeatAck]) error
 	Dispatch(context.Context, *DispatchRequest) (*DispatchResult, error)
 	CommandStream(grpc.BidiStreamingServer[DispatchResult, DispatchRequest]) error
+	// 终端双向流（M2）：Agent 发送终端输出、接收键盘输入；字节流，方向无关。
+	TermStream(grpc.BidiStreamingServer[TermData, TermData]) error
+	// 日志流（M2）：Agent 发送日志块，接收订阅控制（中控按控制台请求转发）。
+	LogStream(grpc.BidiStreamingServer[LogChunk, LogControl]) error
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -122,6 +158,12 @@ func (UnimplementedAgentServiceServer) Dispatch(context.Context, *DispatchReques
 }
 func (UnimplementedAgentServiceServer) CommandStream(grpc.BidiStreamingServer[DispatchResult, DispatchRequest]) error {
 	return status.Errorf(codes.Unimplemented, "method CommandStream not implemented")
+}
+func (UnimplementedAgentServiceServer) TermStream(grpc.BidiStreamingServer[TermData, TermData]) error {
+	return status.Errorf(codes.Unimplemented, "method TermStream not implemented")
+}
+func (UnimplementedAgentServiceServer) LogStream(grpc.BidiStreamingServer[LogChunk, LogControl]) error {
+	return status.Errorf(codes.Unimplemented, "method LogStream not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -194,6 +236,20 @@ func _AgentService_CommandStream_Handler(srv interface{}, stream grpc.ServerStre
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type AgentService_CommandStreamServer = grpc.BidiStreamingServer[DispatchResult, DispatchRequest]
 
+func _AgentService_TermStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServiceServer).TermStream(&grpc.GenericServerStream[TermData, TermData]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_TermStreamServer = grpc.BidiStreamingServer[TermData, TermData]
+
+func _AgentService_LogStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServiceServer).LogStream(&grpc.GenericServerStream[LogChunk, LogControl]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_LogStreamServer = grpc.BidiStreamingServer[LogChunk, LogControl]
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -223,6 +279,18 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 			ServerStreams: true,
 			ClientStreams: true,
 		},
+		{
+			StreamName:    "TermStream",
+			Handler:       _AgentService_TermStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "LogStream",
+			Handler:       _AgentService_LogStream_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
 	},
-	Metadata: "agent.proto",
+	Metadata: "proto/agent.proto",
 }

@@ -5,15 +5,12 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/tls"
 	"encoding/hex"
 	"math"
 	"os"
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
 	"taoops/agent/internal/dispatch"
@@ -86,20 +83,22 @@ func (w *Worker) runSession(ctx context.Context) error {
 		interval = int(cfg.GetHeartbeatIntervalMs())
 	}
 
-	// 心跳与命令流并行；任一通道失败即结束会话，触发退避重连。
-	errCh := make(chan error, 2)
+	// 心跳、命令流、终端流、日志流并行；任一通道失败即结束会话，触发退避重连。
+	errCh := make(chan error, 4)
 	go func() { errCh <- w.pumpHeartbeats(ctx, client, reg.GetNodeId(), interval) }()
 	go func() { errCh <- w.pumpCommands(ctx, client, reg.GetNodeId()) }()
+	go func() { errCh <- PumpTerms(ctx, client, reg.GetNodeId(), w.logf) }()
+	go func() { errCh <- PumpLogs(ctx, client, reg.GetNodeId(), w.logf) }()
 	return <-errCh
 }
 
-// dial 建立连接：TAOOPS_INSECURE=1 时走明文（M1 本机回环）；否则 TLS+TOFU 指纹固化（契约 §1）。
+// dial 建立连接：TAOOPS_INSECURE=1 时走明文（本地回环）；否则 TLS+TOFU 指纹固化（契约 §1）。
 func (w *Worker) dial(ctx context.Context) (*grpc.ClientConn, error) {
-	if os.Getenv("TAOOPS_INSECURE") == "1" {
-		return grpc.NewClient(w.serverURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	creds, err := DialCredentials(w.serverURL)
+	if err != nil {
+		return nil, err
 	}
-	tlsCfg := &tls.Config{ InsecureSkipVerify: true } // TODO(M2): 换为指纹校验 TransportCredentials，禁止裸 InsecureSkipVerify
-	return grpc.NewClient(w.serverURL, grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg)))
+	return grpc.NewClient(w.serverURL, grpc.WithTransportCredentials(creds))
 }
 
 func (w *Worker) pumpHeartbeats(ctx context.Context, client pb.AgentServiceClient, nodeID string, intervalMs int) error {

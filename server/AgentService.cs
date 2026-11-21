@@ -15,7 +15,7 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
     internal static readonly string[] ModuleWhitelist =
     {
         "sysinfo.overview", "site.manage", "db.manage", "files.manage", "term.manage",
-        "cron.manage", "env.manage", "fw.manage", "backup.manage",
+        "cron.manage", "env.manage", "fw.manage", "backup.manage", "ftp.manage",
     };
     private static readonly char[] ForbiddenChars = { ';', '|', '&', '`', '$' };
 
@@ -24,12 +24,14 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
 
     private readonly NodeRegistry _registry;
     private readonly NodeCommandHub _hub;
+    private readonly NodeStreamHub _streams;
     private readonly ILogger<AgentService> _logger;
 
-    public AgentService(NodeRegistry registry, NodeCommandHub hub, ILogger<AgentService> logger)
+    public AgentService(NodeRegistry registry, NodeCommandHub hub, NodeStreamHub streams, ILogger<AgentService> logger)
     {
         _registry = registry;
         _hub = hub;
+        _streams = streams;
         _logger = logger;
     }
 
@@ -100,6 +102,95 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
         _logger.LogInformation("Command stream attached: node_id={NodeId}", nodeId);
         return _hub.AttachAsync(nodeId, CommandStreamAdapter.Writer(responseStream),
             CommandStreamAdapter.Reader(requestStream), context.CancellationToken);
+    }
+
+    /// <summary>Agent 终端流（M2）：会话头 x-session-id；流断开即摘除会话。</summary>
+    public override Task TermStream(
+        IAsyncStreamReader<TermData> requestStream,
+        IServerStreamWriter<TermData> responseStream,
+        ServerCallContext context)
+    {
+        var nodeId = context.RequestHeaders.GetValue("x-node-id");
+        if (string.IsNullOrWhiteSpace(nodeId) || _registry.GetByNodeId(nodeId) is null)
+            throw new RpcException(new Status(StatusCode.NotFound, "unknown or missing x-node-id"));
+        var sessionId = context.RequestHeaders.GetValue("x-session-id");
+        if (string.IsNullOrWhiteSpace(sessionId))
+            throw new RpcException(new Status(StatusCode.InvalidArgument, "missing x-session-id"));
+
+        _logger.LogInformation("Term stream attached: node_id={NodeId} session={SessionId}", nodeId, sessionId);
+        var session = _streams.AttachTerm(nodeId, sessionId);
+        return PumpTermAsync(requestStream, responseStream, session, context.CancellationToken)
+            .ContinueWith(_ => _streams.DetachTerm(sessionId), TaskScheduler.Default);
+    }
+
+    /// <summary>Agent 日志流（M2）：下行订阅控制，上行日志块广播。</summary>
+    public override Task LogStream(
+        IAsyncStreamReader<LogChunk> requestStream,
+        IServerStreamWriter<LogControl> responseStream,
+        ServerCallContext context)
+    {
+        var nodeId = context.RequestHeaders.GetValue("x-node-id");
+        if (string.IsNullOrWhiteSpace(nodeId) || _registry.GetByNodeId(nodeId) is null)
+            throw new RpcException(new Status(StatusCode.NotFound, "unknown or missing x-node-id"));
+
+        _logger.LogInformation("Log stream attached: node_id={NodeId}", nodeId);
+        var session = _streams.AttachLog(nodeId);
+        return PumpLogAsync(requestStream, responseStream, session, context.CancellationToken)
+            .ContinueWith(_ => _streams.DetachLog(nodeId), TaskScheduler.Default);
+    }
+
+    /// <summary>终端双泵：读循环收 Agent 输出进 Inbound，写循环推 Outbound 到 Agent。</summary>
+    private static async Task PumpTermAsync(
+        IAsyncStreamReader<TermData> requestStream,
+        IServerStreamWriter<TermData> responseStream,
+        NodeStreamHub.TermSession session,
+        CancellationToken ct)
+    {
+        var readLoop = Task.Run(async () =>
+        {
+            try
+            {
+                while (await requestStream.MoveNext(ct))
+                    await session.Inbound.Writer.WriteAsync(requestStream.Current, ct);
+            }
+            catch (OperationCanceledException) { }
+            catch (RpcException) { }
+        }, CancellationToken.None);
+
+        try
+        {
+            await foreach (var item in session.Outbound.Reader.ReadAllAsync(ct))
+                await responseStream.WriteAsync(item, ct);
+        }
+        catch (OperationCanceledException) { }
+        await readLoop;
+    }
+
+    /// <summary>日志双泵：读循环广播 Agent 日志块，写循环推订阅控制。</summary>
+    private static async Task PumpLogAsync(
+        IAsyncStreamReader<LogChunk> requestStream,
+        IServerStreamWriter<LogControl> responseStream,
+        NodeStreamHub.LogSession session,
+        CancellationToken ct)
+    {
+        var readLoop = Task.Run(async () =>
+        {
+            try
+            {
+                while (await requestStream.MoveNext(ct))
+                    session.Broadcast(requestStream.Current);
+            }
+            catch (OperationCanceledException) { }
+            catch (RpcException) { }
+        }, CancellationToken.None);
+
+        try
+        {
+            await foreach (var ctrl in session.Outbound.Reader.ReadAllAsync(ct))
+                await responseStream.WriteAsync(ctrl, ct);
+        }
+        catch (OperationCanceledException) { }
+        await readLoop;
     }
 
     private static void ValidateCommand(DispatchRequest request)
