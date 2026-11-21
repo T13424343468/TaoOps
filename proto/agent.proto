@@ -10,6 +10,7 @@ service AgentService {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Heartbeat(stream HeartbeatMsg) returns (stream HeartbeatAck);
   rpc Dispatch(DispatchRequest) returns (DispatchResult);
+  rpc CommandStream(stream DispatchResult) returns (stream DispatchRequest);
 }
 
 message RegisterRequest {
@@ -48,9 +49,11 @@ message DispatchRequest {
   string command = 2;
   repeated string args = 3;
   int32 timeout_ms = 4;
+  string request_id = 5;
 }
 
 message DispatchResult {
   int32 exit_code = 1;
   string output = 2;
+  string request_id = 3;
 }

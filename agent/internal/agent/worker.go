@@ -14,7 +14,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
+	"taoops/agent/internal/dispatch"
 	"taoops/agent/internal/metrics"
 	pb "taoops/agent/pb"
 )
@@ -30,11 +32,12 @@ type Worker struct {
 	serverURL string
 	agentID   string
 	collect   func() metrics.Snapshot
+	dispatch  *dispatch.Dispatcher
 	logf      func(string, ...any)
 }
 
-func NewWorker(serverURL, agentID string, collect func() metrics.Snapshot, logf func(string, ...any)) *Worker {
-	return &Worker{serverURL: serverURL, agentID: agentID, collect: collect, logf: logf}
+func NewWorker(serverURL, agentID string, collect func() metrics.Snapshot, d *dispatch.Dispatcher, logf func(string, ...any)) *Worker {
+	return &Worker{serverURL: serverURL, agentID: agentID, collect: collect, dispatch: d, logf: logf}
 }
 
 // Run 阻塞运行直到 ctx 取消；断链按指数退避重连（1s 倍增，上限 60s）。
@@ -82,7 +85,12 @@ func (w *Worker) runSession(ctx context.Context) error {
 	if cfg := reg.GetConfig(); cfg != nil && cfg.GetHeartbeatIntervalMs() > 0 {
 		interval = int(cfg.GetHeartbeatIntervalMs())
 	}
-	return w.pumpHeartbeats(ctx, client, reg.GetNodeId(), interval)
+
+	// 心跳与命令流并行；任一通道失败即结束会话，触发退避重连。
+	errCh := make(chan error, 2)
+	go func() { errCh <- w.pumpHeartbeats(ctx, client, reg.GetNodeId(), interval) }()
+	go func() { errCh <- w.pumpCommands(ctx, client, reg.GetNodeId()) }()
+	return <-errCh
 }
 
 // dial 建立连接：TAOOPS_INSECURE=1 时走明文（M1 本机回环）；否则 TLS+TOFU 指纹固化（契约 §1）。
@@ -126,6 +134,53 @@ func (w *Worker) pumpHeartbeats(ctx context.Context, client pb.AgentServiceClien
 func Fingerprint(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+// pumpCommands 维持 CommandStream：接收中控下发的指令，经统一分发器执行后按
+// request_id 回传。发送侧单 goroutine 串行化（gRPC 流 Send 非并发安全）。
+func (w *Worker) pumpCommands(ctx context.Context, client pb.AgentServiceClient, nodeID string) error {
+	streamCtx, cancel := context.WithCancel(metadata.AppendToOutgoingContext(ctx, "x-node-id", nodeID))
+	defer cancel()
+
+	stream, err := client.CommandStream(streamCtx)
+	if err != nil {
+		return err
+	}
+
+	results := make(chan *pb.DispatchResult, 16)
+	senderDone := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case r := <-results:
+				if err := stream.Send(r); err != nil {
+					senderDone <- err
+					return
+				}
+			case <-streamCtx.Done():
+				senderDone <- streamCtx.Err()
+				return
+			}
+		}
+	}()
+
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			cancel()
+			<-senderDone
+			return err
+		}
+		go func() {
+			execCtx, execCancel := dispatch.TimeoutContext(streamCtx, req.GetTimeoutMs())
+			defer execCancel()
+			code, out := w.dispatch.Execute(execCtx, req.GetCommand(), req.GetArgs())
+			select {
+			case results <- &pb.DispatchResult{RequestId: req.GetRequestId(), ExitCode: code, Output: out}:
+			case <-streamCtx.Done():
+			}
+		}()
+	}
 }
 
 func hostname() string {

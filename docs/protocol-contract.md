@@ -21,6 +21,7 @@ service AgentService {
   rpc Register(RegisterRequest) returns (RegisterResponse);
   rpc Heartbeat(stream HeartbeatMsg) returns (stream HeartbeatAck);
   rpc Dispatch(DispatchRequest) returns (DispatchResult);
+  rpc CommandStream(stream DispatchResult) returns (stream DispatchRequest);
 }
 
 message RegisterRequest {
@@ -51,10 +52,12 @@ message DispatchRequest {
   string command = 2;  // M1 仅允许白名单命令（见 §4）
   repeated string args = 3;
   int32  timeout_ms = 4; // 默认 30000，上限 300000
+  string request_id = 5; // 中控生成的唯一请求 ID，用于结果匹配
 }
 message DispatchResult {
   int32  exit_code = 1;
   string output    = 2; // stdout+stderr 合并，上限 1MB 截断
+  string request_id = 3; // 对应 DispatchRequest.request_id
 }
 ```
 
@@ -68,12 +71,16 @@ message DispatchResult {
 | UNAVAILABLE(14) | 中控不可达 | 指数退避重连 |
 | DEADLINE_EXCEEDED(4) | 指令超时 | 结果标记超时，进程被杀 |
 
-## 4. 指令白名单（M1）
+## 4. 指令白名单与执行路径（M1）
 
-仅允许：`echo`、`uname`、`df`、`free`、`uptime`。中控侧校验命令与参数（禁止 `;`、`|`、`&&`、反引号、`$(`）；白名单外一律 INVALID_ARGUMENT。M2 起改为按节点授权的命令集。
+- **Shell 白名单**：`echo`、`uname`、`df`、`free`、`uptime`。中控侧校验命令与参数（禁止 `;`、`|`、`&&`、反引号、`$(`）；白名单外一律 INVALID_ARGUMENT。
+- **模块命令白名单**：`sysinfo.overview`、`site.manage`、`db.manage`、`files.manage`、`term.manage`、`cron.manage`、`env.manage`、`fw.manage`、`backup.manage`。模块命令的 `args` 采用 `key=value` 形式传入，Agent 侧还原为 `map[string]any`（无 `=` 的项忽略）。
+- **执行路径**：中控 Dispatch 校验通过后，经 `CommandStream` 双向流转发到目标节点，由 Agent 侧统一分发器执行（模块命令走模块注册表，Shell 命令直接 exec、不经 shell），结果按 `request_id` 回传。中控在超时上限内等待；节点命令通道未连接返回 UNAVAILABLE。
+- M2 起改为按节点授权的命令集。
 
 ## 5. 一致性约束
 
 - `agent_id` 在中控侧幂等：重复注册返回同一 `node_id`。
+- `CommandStream` 由 Agent 在注册成功后发起，请求头携带 `x-node-id`；中控按该头挂接节点命令通道，流断开即摘除并使该节点在途请求失败。
 - 心跳流中断超过 3 个周期（45s）标记节点离线。
 - 本契约、`src/proto/agent.proto`、两端实现三者必须一致；不一致按缺陷处理。

@@ -10,5 +10,6 @@
 | cron | FR-A6 | Shell/备份/日志切割定时执行 | crontab 管理 + 每次执行写日志含 success/fail 状态 |
 | env | FR-A7 | Nginx/Apache/MySQL/PHP/Node/Java/Docker 一键部署 | 离线包导入校验（.tar.gz）→ 解包 → install.sh，全程无外网 |
 | fw | FR-A10 | iptables/firewalld 端口放行封禁 | 规则即时生效；审计留痕 + 最近一次操作可回滚 |
+| backup | FR-A9 | 网站/数据库/整站备份到本地或指定目录 | 全量+增量（size+mtime 跳过未变）；还原需 confirm=true，还原前自动回滚快照；防路径穿越 |
 
-FR-A8（FTP，P1）与 FR-A9（备份还原）按派活单"按需"处理，本班未落码，见断点档案。
+FR-A8（FTP，P1）仍未落码，见断点档案；FR-A9 已于 M1 联调班落码（backup 模块，8 用例全绿）。

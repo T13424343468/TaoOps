@@ -23,6 +23,7 @@ func TestRegisterAllInstallsEveryModule(t *testing.T) {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	want := []string{
+		"backup.manage",
 		"cron.manage",
 		"db.manage",
 		"env.manage",
@@ -53,7 +54,7 @@ func TestRegisterAllTwiceIsIdempotent(t *testing.T) {
 	if err := RegisterAll(r, p); err != nil {
 		t.Fatalf("second RegisterAll: %v", err)
 	}
-	if len(r.Names()) != 8 {
+	if len(r.Names()) != 9 {
 		t.Fatalf("names = %v", r.Names())
 	}
 }

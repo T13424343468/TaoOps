@@ -19,9 +19,10 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	AgentService_Register_FullMethodName  = "/taoops.v1.AgentService/Register"
-	AgentService_Heartbeat_FullMethodName = "/taoops.v1.AgentService/Heartbeat"
-	AgentService_Dispatch_FullMethodName  = "/taoops.v1.AgentService/Dispatch"
+	AgentService_Register_FullMethodName      = "/taoops.v1.AgentService/Register"
+	AgentService_Heartbeat_FullMethodName     = "/taoops.v1.AgentService/Heartbeat"
+	AgentService_Dispatch_FullMethodName      = "/taoops.v1.AgentService/Dispatch"
+	AgentService_CommandStream_FullMethodName = "/taoops.v1.AgentService/CommandStream"
 )
 
 // AgentServiceClient is the client API for AgentService service.
@@ -33,6 +34,7 @@ type AgentServiceClient interface {
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	Heartbeat(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[HeartbeatMsg, HeartbeatAck], error)
 	Dispatch(ctx context.Context, in *DispatchRequest, opts ...grpc.CallOption) (*DispatchResult, error)
+	CommandStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DispatchResult, DispatchRequest], error)
 }
 
 type agentServiceClient struct {
@@ -76,6 +78,19 @@ func (c *agentServiceClient) Dispatch(ctx context.Context, in *DispatchRequest, 
 	return out, nil
 }
 
+func (c *agentServiceClient) CommandStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DispatchResult, DispatchRequest], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &AgentService_ServiceDesc.Streams[1], AgentService_CommandStream_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DispatchResult, DispatchRequest]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_CommandStreamClient = grpc.BidiStreamingClient[DispatchResult, DispatchRequest]
+
 // AgentServiceServer is the server API for AgentService service.
 // All implementations must embed UnimplementedAgentServiceServer
 // for forward compatibility.
@@ -85,6 +100,7 @@ type AgentServiceServer interface {
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	Heartbeat(grpc.BidiStreamingServer[HeartbeatMsg, HeartbeatAck]) error
 	Dispatch(context.Context, *DispatchRequest) (*DispatchResult, error)
+	CommandStream(grpc.BidiStreamingServer[DispatchResult, DispatchRequest]) error
 	mustEmbedUnimplementedAgentServiceServer()
 }
 
@@ -103,6 +119,9 @@ func (UnimplementedAgentServiceServer) Heartbeat(grpc.BidiStreamingServer[Heartb
 }
 func (UnimplementedAgentServiceServer) Dispatch(context.Context, *DispatchRequest) (*DispatchResult, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Dispatch not implemented")
+}
+func (UnimplementedAgentServiceServer) CommandStream(grpc.BidiStreamingServer[DispatchResult, DispatchRequest]) error {
+	return status.Errorf(codes.Unimplemented, "method CommandStream not implemented")
 }
 func (UnimplementedAgentServiceServer) mustEmbedUnimplementedAgentServiceServer() {}
 func (UnimplementedAgentServiceServer) testEmbeddedByValue()                      {}
@@ -168,6 +187,13 @@ func _AgentService_Dispatch_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _AgentService_CommandStream_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AgentServiceServer).CommandStream(&grpc.GenericServerStream[DispatchResult, DispatchRequest]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type AgentService_CommandStreamServer = grpc.BidiStreamingServer[DispatchResult, DispatchRequest]
+
 // AgentService_ServiceDesc is the grpc.ServiceDesc for AgentService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -188,6 +214,12 @@ var AgentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Heartbeat",
 			Handler:       _AgentService_Heartbeat_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "CommandStream",
+			Handler:       _AgentService_CommandStream_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

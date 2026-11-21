@@ -1,10 +1,12 @@
-// 一次性 E2E 客户端：对中控下发 echo 指令并断言回传结果。
+// 一次性 E2E 客户端：对中控下发指令并断言回传结果。
+// 用法：dispatch <addr> <node_id> [command [args...]]；command 默认 echo。
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"google.golang.org/grpc"
@@ -13,8 +15,18 @@ import (
 )
 
 func main() {
-	addr := os.Args[1]
-	nodeID := os.Args[2]
+	if len(os.Args) < 3 {
+		fmt.Println("FAIL: usage: dispatch <addr> <node_id> [command [args...]]")
+		os.Exit(1)
+	}
+	addr, nodeID := os.Args[1], os.Args[2]
+	command := "echo"
+	var args []string
+	if len(os.Args) > 3 {
+		command = os.Args[3]
+		args = os.Args[4:]
+	}
+
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		fmt.Println("FAIL: dial", err)
@@ -22,16 +34,16 @@ func main() {
 	}
 	defer conn.Close()
 	client := pb.NewAgentServiceClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	res, err := client.Dispatch(ctx, &pb.DispatchRequest{NodeId: nodeID, Command: "echo", Args: []string{"e2e-ok"}})
+	res, err := client.Dispatch(ctx, &pb.DispatchRequest{NodeId: nodeID, Command: command, Args: args})
 	if err != nil {
-		fmt.Println("FAIL: dispatch", err)
+		fmt.Printf("FAIL: dispatch %s: %v\n", command, err)
 		os.Exit(1)
 	}
-	if res.GetExitCode() != 0 || res.GetOutput() != "e2e-ok\n" {
-		fmt.Printf("FAIL: result exit=%d output=%q\n", res.GetExitCode(), res.GetOutput())
+	fmt.Printf("RESULT exit=%d output=%q\n", res.GetExitCode(), res.GetOutput())
+	if res.GetExitCode() != 0 {
 		os.Exit(1)
 	}
-	fmt.Println("PASS: dispatch roundtrip")
+	_ = strings.TrimSpace
 }

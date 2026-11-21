@@ -5,6 +5,7 @@ package modules
 import (
 	"fmt"
 
+	"taoops/agent/internal/modules/backup"
 	"taoops/agent/internal/modules/cron"
 	"taoops/agent/internal/modules/db"
 	"taoops/agent/internal/modules/env"
@@ -41,6 +42,7 @@ func RegisterAll(r *registry.Registry, p Paths) error {
 		{"cron", func() error { return cron.Register(r, cron.NewManager(p.LogDir)) }},
 		{"env", func() error { return env.Register(r, env.NewManager(p.PackageDir, p.InstallDir)) }},
 		{"fw", func() error { return fw.Register(r, fw.NewManager(p.AuditPath)) }},
+		{"backup", func() error { return backup.Register(r, backup.NewManager(p.BackupDir)) }},
 	}
 	for _, s := range steps {
 		if err := s.fn(); err != nil {

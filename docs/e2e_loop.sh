@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# TaoOps M1 端到端回环：起中控 → 起 Agent → 断言注册+心跳 → 中控下发指令 → 结果回传
+# TaoOps M1 端到端回环：起中控 → 起 Agent → 断言注册+心跳 → 真实模块/Shell 指令经
+# CommandStream 下发到 Agent 侧分发器执行 → 结果回传
 # 用法：bash e2e_loop.sh ；输出 PASS/FAIL，退出码 0/1
 set -u
 export PATH=/root/workspace/.local/go/bin:/root/workspace/.local/dotnet10:$PATH
+export DOTNET_ROOT=/root/workspace/.local/dotnet10
 export DOTNET_CLI_TELEMETRY_OPTOUT=1
 SRC=/root/workspace/projects/2377946/src
 PORT=5241
@@ -22,10 +24,12 @@ for i in $(seq 1 30); do
   sleep 0.5
 done
 curl -s --http2-prior-knowledge "http://127.0.0.1:$PORT/" 2>/dev/null | grep -q "TaoOps Server M1" || { echo "FAIL: server not up"; cat $LOG/server.log; exit 1; }
-echo "[1/4] server up"
+echo "[1/7] server up"
 
-# 2. 起 Agent（gRPC 明文 http）
+# 2. 起 Agent（gRPC 明文 http；模块目录指向临时目录）
 cd $SRC/agent
+export TAOOPS_CONF_DIR=$LOG/conf TAOOPS_BACKUP_DIR=$LOG/backup TAOOPS_SESSION_DIR=$LOG/sessions
+export TAOOPS_LOG_DIR=$LOG/logs TAOOPS_PACKAGE_DIR=$LOG/pkg TAOOPS_INSTALL_DIR=$LOG/opt TAOOPS_AUDIT_PATH=$LOG/audit.json
 TAOOPS_SERVER="127.0.0.1:$PORT" TAOOPS_AGENT_ID=e2e-agent-001 TAOOPS_INSECURE=1 go run ./cmd/agent > $LOG/agent.log 2>&1 &
 AGENT_PID=$!
 
@@ -38,12 +42,33 @@ for i in $(seq 1 40); do
   sleep 0.5
 done
 [ $REGISTERED -eq 1 ] && [ $HEARTBEAT -eq 1 ] || { echo "FAIL: register/heartbeat"; cat $LOG/server.log $LOG/agent.log; exit 1; }
-echo "[2/4] agent registered + heartbeating"
+echo "[2/7] agent registered + heartbeating"
 
-# 4. 指令下发回环：一次性 gRPC 客户端调 Dispatch
+# 4. 等命令流挂接
+for i in $(seq 1 20); do
+  grep -q "Command stream attached" $LOG/server.log && break
+  sleep 0.5
+done
+grep -q "Command stream attached" $LOG/server.log || { echo "FAIL: command stream not attached"; cat $LOG/server.log; exit 1; }
+echo "[3/7] command stream attached"
+
 NODE_ID=$(grep -oP 'node_id=\K[0-9a-f]{32}' $LOG/server.log | head -1)
 [ -n "$NODE_ID" ] || { echo "FAIL: node_id not found in server log"; exit 1; }
 cd $SRC/agent
-go run ./cmd/dispatch "127.0.0.1:$PORT" "$NODE_ID" 2>&1 | tee $LOG/dispatch.log | grep -q "PASS" || { echo "FAIL: dispatch"; cat $LOG/dispatch.log; exit 1; }
-echo "[3/4] dispatch roundtrip ok"
-echo "[4/4] E2E PASS"
+
+# 5. Shell 白名单指令：echo 经 CommandStream 到 Agent 执行
+go run ./cmd/dispatch "127.0.0.1:$PORT" "$NODE_ID" echo e2e-ok 2>&1 | tee $LOG/dispatch-echo.log | grep -q 'RESULT exit=0.*e2e-ok' || { echo "FAIL: echo dispatch"; cat $LOG/dispatch-echo.log $LOG/agent.log; exit 1; }
+echo "[4/7] shell echo roundtrip ok"
+
+# 6. 真实模块：sysinfo.overview
+go run ./cmd/dispatch "127.0.0.1:$PORT" "$NODE_ID" sysinfo.overview 2>&1 | tee $LOG/dispatch-sysinfo.log | grep -q 'RESULT exit=0' || { echo "FAIL: sysinfo.overview"; cat $LOG/dispatch-sysinfo.log $LOG/agent.log; exit 1; }
+echo "[5/7] module sysinfo.overview ok"
+
+# 7. 真实模块：backup.manage op=list（沙箱无 crontab，cron 断言由单测覆盖）
+go run ./cmd/dispatch "127.0.0.1:$PORT" "$NODE_ID" backup.manage op=list 2>&1 | tee $LOG/dispatch-backup.log | grep -q 'RESULT exit=0' || { echo "FAIL: backup.manage"; cat $LOG/dispatch-backup.log $LOG/agent.log; exit 1; }
+echo "[6/7] module backup.manage ok"
+
+# 8. Shell 白名单：df
+go run ./cmd/dispatch "127.0.0.1:$PORT" "$NODE_ID" df 2>&1 | tee $LOG/dispatch-df.log | grep -q 'RESULT exit=0' || { echo "FAIL: df"; cat $LOG/dispatch-df.log $LOG/agent.log; exit 1; }
+echo "[7/7] shell df ok"
+echo "E2E PASS"
