@@ -124,7 +124,9 @@ public static class OpenRestyConfigGenerator
                     return from ~= nil
                 end
 
-                return function()
+                -- access_by_lua_file executes this file as the handler directly;
+                -- a returned closure would never be invoked (found in live-fire testing).
+                do
                     if not WAF_ENABLED then return end
                     local now = ngx.time()
                     maybe_reload(now)
