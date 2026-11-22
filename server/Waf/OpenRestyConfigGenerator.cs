@@ -74,7 +74,7 @@ public static class OpenRestyConfigGenerator
                 -- Data file: rules.json (same directory). Rule changes hot-reload by mtime check.
                 local lfs_ok, lfs = pcall(require, "lfs")
                 local json = require("cjson.safe")
-                local ngx_re = require("ngx.re")
+                local ngx_re = ngx.re
 
                 local RULES_FILE = TAOOPS_WAF_RULES_FILE
                 local WAF_ENABLED = TAOOPS_WAF_ENABLED
@@ -119,12 +119,19 @@ public static class OpenRestyConfigGenerator
 
                 local function match_regex(rule)
                     if not ngx.var.request_uri and not ngx.var.http_user_agent then return false end
-                    local subject = (ngx.var.request_uri or "") .. " " .. (ngx.var.http_user_agent or "")
+                    -- URI 先解码再匹配：?id=1%20union%20select 不得绕过 SQLi 规则；
+                    -- 拦截/放行日志仍记原始 URI（取证口径）。
+                    local uri = ngx.var.request_uri or ""
+                    local ok_dec, decoded = pcall(ngx.unescape_uri, uri)
+                    if not ok_dec then decoded = uri end
+                    local subject = decoded .. " " .. (ngx.var.http_user_agent or "")
                     local from = ngx_re.find(subject, rule.pattern, "jo")
                     return from ~= nil
                 end
 
-                return function()
+                -- access_by_lua_file executes this file as the handler directly;
+                -- a returned closure would never be invoked (found in live-fire testing).
+                do
                     if not WAF_ENABLED then return end
                     local now = ngx.time()
                     maybe_reload(now)

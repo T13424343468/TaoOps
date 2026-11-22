@@ -39,6 +39,9 @@ public class NodeRegistry
     public NodeState? GetByNodeId(string nodeId) =>
         _nodes.Values.FirstOrDefault(n => n.NodeId == nodeId);
 
+    /// <summary>全部已知节点（自动订阅巡检用；顺序不承诺稳定）。</summary>
+    public IEnumerable<NodeState> All() => _nodes.Values;
+
     public bool Touch(string nodeId)
     {
         var node = GetByNodeId(nodeId);

@@ -25,6 +25,8 @@ builder.Services.AddSingleton<AuditStore>(_ => new AuditStore(wafDataDir));
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<SecEventStore>(_ => new SecEventStore(wafDataDir));
 builder.Services.AddSingleton<SecEventIngestor>();
+// 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
+builder.Services.AddHostedService<StreamIngestorHostedService>();
 
 // 传输模式（契约 §1）：TAOOPS_INSECURE=1 走明文 h2c（仅本地回环测试）；
 // 默认 TLS，中控自签证书落数据目录，重启复用。
