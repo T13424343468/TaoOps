@@ -74,7 +74,7 @@ public static class OpenRestyConfigGenerator
                 -- Data file: rules.json (same directory). Rule changes hot-reload by mtime check.
                 local lfs_ok, lfs = pcall(require, "lfs")
                 local json = require("cjson.safe")
-                local ngx_re = require("ngx.re")
+                local ngx_re = ngx.re
 
                 local RULES_FILE = TAOOPS_WAF_RULES_FILE
                 local WAF_ENABLED = TAOOPS_WAF_ENABLED
