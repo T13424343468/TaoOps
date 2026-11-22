@@ -26,9 +26,10 @@ trap cleanup EXIT
 
 start_server() {
   cd $SRC/server
+  # 直跑产物 dll（M3 安全班适配）：dotnet run 在沙箱静默挂起，直跑 dll 行为等价。
   env -u ASPNETCORE_URLS -u ASPNETCORE_Kestrel__EndpointDefaults__Protocols \
     TAOOPS_DATA_DIR=$LOG/srvdata TAOOPS_PORT=$PORT \
-    dotnet run -c Release --no-build > $LOG/server.log 2>&1 &
+    dotnet bin/Release/net10.0/TaoOps.Server.dll > $LOG/server.log 2>&1 &
   SERVER_PID=$!
   for i in $(seq 1 40); do
     curl -sk "https://127.0.0.1:$PORT/" >/dev/null 2>&1 && return 0

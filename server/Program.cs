@@ -1,5 +1,8 @@
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using System.Text.Json;
+using TaoOps.Server.Audit;
+using TaoOps.Server.Auth;
+using TaoOps.Server.Sec;
 using TaoOps.Server.Services;
 using TaoOps.Server.Waf;
 
@@ -14,6 +17,14 @@ var wafDataDir = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR") ?? "/var/
 builder.Services.AddSingleton<WafRuleStore>(_ => new WafRuleStore(wafDataDir));
 builder.Services.AddSingleton<WafEventStore>(_ => new WafEventStore(wafDataDir));
 builder.Services.AddSingleton<WafEventIngestor>();
+
+// 中控自身安全与审计（M3 安全班）：账号/会话/审计/SEC 回流。
+builder.Services.AddSingleton<UserStore>(_ => new UserStore(wafDataDir));
+builder.Services.AddSingleton<TokenStore>();
+builder.Services.AddSingleton<AuditStore>(_ => new AuditStore(wafDataDir));
+builder.Services.AddSingleton<AuthService>();
+builder.Services.AddSingleton<SecEventStore>(_ => new SecEventStore(wafDataDir));
+builder.Services.AddSingleton<SecEventIngestor>();
 
 // 传输模式（契约 §1）：TAOOPS_INSECURE=1 走明文 h2c（仅本地回环测试）；
 // 默认 TLS，中控自签证书落数据目录，重启复用。
@@ -41,6 +52,9 @@ else if (!legacyUrls)
 
 var app = builder.Build();
 app.UseWebSockets();
+// 中间件次序：审计在外（401/403 拒绝也留痕），鉴权在内；仅作用于 /api。
+app.UseMiddleware<AuditMiddleware>();
+app.UseMiddleware<AuthMiddleware>();
 app.MapGrpcService<AgentService>();
 app.MapGet("/", () => insecure ? "TaoOps Server M2 (insecure)" : "TaoOps Server M2");
 
@@ -100,4 +114,86 @@ app.MapGet("/api/waf/config/preview", (WafRuleStore store) =>
     return Results.Json(new { bundle.NginxConf, bundle.SiteConf, bundle.AccessLua, bundle.RulesJson });
 });
 
+// ---- 认证与账号管理（M3 安全班，PRD FR-C2 面板侧）----
+app.MapPost("/api/auth/login", (LoginRequest req, HttpContext http, AuthService auth) =>
+{
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var result = auth.Login(req.Username ?? "", req.Password ?? "", ip,
+        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    if (result.Locked) return Results.Json(new { error = "account locked" }, statusCode: 423);
+    if (!result.Ok) return Results.Json(new { error = "invalid credentials" }, statusCode: 401);
+    return Results.Json(new { token = result.Session!.Token, role = result.Session.Role.ToString(),
+        username = result.Session.Username, expires_at_ms = result.Session.ExpiresAtMs });
+});
+app.MapPost("/api/auth/logout", (HttpContext ctx, TokenStore tokens) =>
+{
+    var raw = ctx.Request.Headers.Authorization.ToString();
+    var token = raw.StartsWith("Bearer ", StringComparison.Ordinal) ? raw["Bearer ".Length..].Trim() : raw;
+    tokens.Revoke(token);
+    return Results.Ok();
+});
+app.MapGet("/api/auth/me", (HttpContext ctx) =>
+    Results.Json(new { user = ctx.Items["taoops.user"] ?? "", role = ctx.Items["taoops.role"] ?? "" }));
+
+// 首个管理员引导：仅账号库为空时放行（无出厂默认口令）。
+app.MapPost("/api/auth/bootstrap", (BootstrapRequest req, UserStore users) =>
+{
+    if (users.Load().Count > 0)
+        return Results.Json(new { error = "bootstrap closed: users exist" }, statusCode: 403);
+    if (string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password))
+        return Results.BadRequest(new { error = "username and password required" });
+    var account = users.Add(new UserAccount
+    {
+        Username = req.Username,
+        PasswordHash = AuthService.HashPassword(req.Password),
+        Role = UserRole.Admin,
+        CreatedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+    });
+    return Results.Json(new { username = account.Username, role = account.Role.ToString() });
+});
+
+app.MapGet("/api/auth/users", (UserStore users) =>
+    Results.Json(users.Load().Select(u => new { u.Username, u.Role, u.CreatedAtMs })));
+app.MapPost("/api/auth/users", (CreateUserRequest req, UserStore users) =>
+{
+    try
+    {
+        var account = users.Add(new UserAccount
+        {
+            Username = req.Username ?? "",
+            PasswordHash = AuthService.HashPassword(req.Password ?? ""),
+            Role = req.Role == "Admin" ? UserRole.Admin : UserRole.Operator,
+            CreatedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+        });
+        return Results.Json(new { username = account.Username, role = account.Role.ToString() });
+    }
+    catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
+});
+app.MapDelete("/api/auth/users/{username}", (string username, UserStore users) =>
+    users.Remove(username) ? Results.Ok() : Results.NotFound());
+app.MapGet("/api/auth/lockouts", (AuthService auth) =>
+    Results.Json(auth.Lockouts(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
+
+// ---- 审计（FR-D4：留痕/哈希链/查询/导出）----
+app.MapGet("/api/audit", (AuditStore store, string? user, long? from, long? to) =>
+    Results.Json(store.Query(user, from, to)));
+app.MapGet("/api/audit/verify", (AuditStore store) =>
+{
+    var (valid, brokenAt) = store.VerifyChain();
+    return Results.Json(new { valid, broken_at_seq = brokenAt });
+});
+app.MapGet("/api/audit/export", (AuditStore store, string? format) =>
+    format == "csv"
+        ? Results.Text(store.ExportCsv(), "text/csv", System.Text.Encoding.UTF8)
+        : Results.Text(store.ExportJson(), "application/json"));
+
+// ---- SSH 防爆破事件查询（FR-C2，Agent secguard 经 LogStream 回流）----
+app.MapGet("/api/sec/events", (SecEventStore store, string? nodeId, long? from, long? to) =>
+    Results.Json(store.Query(nodeId, from, to)));
+
 app.Run();
+
+// ---- 请求模型（M3 安全班）----
+public sealed record LoginRequest(string? Username, string? Password);
+public sealed record BootstrapRequest(string? Username, string? Password);
+public sealed record CreateUserRequest(string? Username, string? Password, string? Role);

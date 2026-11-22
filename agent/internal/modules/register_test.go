@@ -30,6 +30,7 @@ func TestRegisterAllInstallsEveryModule(t *testing.T) {
 		"files.manage",
 		"ftp.manage",
 		"fw.manage",
+		"sec.manage",
 		"site.manage",
 		"sysinfo.overview",
 		"term.manage",
@@ -55,7 +56,7 @@ func TestRegisterAllTwiceIsIdempotent(t *testing.T) {
 	if err := RegisterAll(r, p); err != nil {
 		t.Fatalf("second RegisterAll: %v", err)
 	}
-	if len(r.Names()) != 10 {
+	if len(r.Names()) != 11 {
 		t.Fatalf("names = %v", r.Names())
 	}
 }

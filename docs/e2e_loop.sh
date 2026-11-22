@@ -18,7 +18,9 @@ trap cleanup EXIT
 cd $SRC/server
 export TAOOPS_INSECURE=1
 export ASPNETCORE_Kestrel__EndpointDefaults__Protocols="Http2"
-dotnet run -c Release --no-build --urls "http://127.0.0.1:$PORT" > $LOG/server.log 2>&1 &
+# 直跑产物 dll（M3 安全班适配）：dotnet run 在沙箱静默挂起（build-server shutdown 无效），
+# 直跑 dll 行为等价（脚本假定已 dotnet build -c Release）。
+dotnet bin/Release/net10.0/TaoOps.Server.dll --urls "http://127.0.0.1:$PORT" > $LOG/server.log 2>&1 &
 SERVER_PID=$!
 for i in $(seq 1 30); do
   curl -s --http2-prior-knowledge "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && break
