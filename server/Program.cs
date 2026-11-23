@@ -160,11 +160,13 @@ app.MapPost("/api/auth/users", (CreateUserRequest req, UserStore users) =>
 {
     try
     {
+        if (!RoleParser.TryParse(req.Role, out var role))
+            return Results.BadRequest(new { error = "role must be Admin, Operator or ReadOnly" });
         var account = users.Add(new UserAccount
         {
             Username = req.Username ?? "",
             PasswordHash = AuthService.HashPassword(req.Password ?? ""),
-            Role = req.Role == "Admin" ? UserRole.Admin : UserRole.Operator,
+            Role = role,
             CreatedAtMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         });
         return Results.Json(new { username = account.Username, role = account.Role.ToString() });
