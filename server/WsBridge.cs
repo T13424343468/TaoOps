@@ -62,8 +62,9 @@ public static class WsBridge
         }
     }
 
-    /// <summary>日志：连接即向 Agent 下发订阅控制，LogChunk 广播回 WS。</summary>
-    public static async Task MapLogs(HttpContext ctx, NodeStreamHub hub, string nodeId, string path, int tail)
+    /// <summary>日志：连接即向 Agent 下发订阅控制，LogChunk 广播回 WS。
+    /// target=container 时 path 携带容器名（FR-A11 容器日志回流）。</summary>
+    public static async Task MapLogs(HttpContext ctx, NodeStreamHub hub, string nodeId, string path, int tail, string target = "file")
     {
         if (!ctx.WebSockets.IsWebSocketRequest)
         {
@@ -86,6 +87,7 @@ public static class WsBridge
             Action = "subscribe",
             Path = path,
             TailLines = tail,
+            Target = target,
         }, linked.Token);
 
         using var sub = session.Subscribe(out var reader);

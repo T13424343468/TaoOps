@@ -9,18 +9,24 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"sync"
 	"time"
 
 	"taoops/agent/internal/modules/registry"
 )
 
+// containerNameRe mirrors the FR-A11 whitelist: ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$
+var containerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+
 // Session is one terminal session with a reconnect token.
 type Session struct {
 	ID      string
 	Token   string
 	Created time.Time
-	closed  bool
+	// Container pins exec to a container (FR-A11 attach_container); empty = host shell.
+	Container string
+	closed    bool
 }
 
 // Manager tracks terminal sessions.
@@ -38,13 +44,20 @@ func NewManager() *Manager {
 
 // Create opens a session and returns it with a reconnect token.
 func (m *Manager) Create() *Session {
+	return m.CreateInContainer("")
+}
+
+// CreateInContainer opens a session optionally bound to a container
+// (FR-A11: op=attach_container); session routing stays unchanged.
+func (m *Manager) CreateInContainer(container string) *Session {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.nextID++
 	s := &Session{
-		ID:      fmt.Sprintf("term-%04d", m.nextID),
-		Token:   fmt.Sprintf("tok-%d-%d", m.Now().UnixNano(), m.nextID),
-		Created: m.Now(),
+		ID:        fmt.Sprintf("term-%04d", m.nextID),
+		Token:     fmt.Sprintf("tok-%d-%d", m.Now().UnixNano(), m.nextID),
+		Created:   m.Now(),
+		Container: container,
 	}
 	m.sessions[s.ID] = s
 	return s
@@ -82,12 +95,22 @@ func (m *Manager) Close(id string) error {
 }
 
 // Exec runs a command inside a session and returns combined output.
+// Container-bound sessions exec through docker (FR-A11).
 func (m *Manager) Exec(id string, command string) (string, int, error) {
 	s, err := m.Reconnect(id, m.tokenOf(id))
 	if err != nil {
 		return "", 1, err
 	}
-	cmd := exec.Command("/bin/sh", "-c", command)
+	var cmd *exec.Cmd
+	if s.Container != "" {
+		if !containerNameRe.MatchString(s.Container) {
+			return "", 1, fmt.Errorf("term: invalid container name %q", s.Container)
+		}
+		cmd = exec.Command("docker", "--host", "unix:///var/run/docker.sock",
+			"exec", s.Container, "sh", "-c", command)
+	} else {
+		cmd = exec.Command("/bin/sh", "-c", command)
+	}
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
@@ -120,6 +143,13 @@ func Handler(m *Manager) registry.Handler {
 		case "create":
 			s := m.Create()
 			return registry.Result{ExitCode: 0, Output: s.ID, Data: map[string]any{"id": s.ID, "token": s.Token}}, nil
+		case "attach_container":
+			container, _ := args["container"].(string)
+			if !containerNameRe.MatchString(container) {
+				return registry.Result{ExitCode: 1}, fmt.Errorf("term: invalid container name %q", container)
+			}
+			s := m.CreateInContainer(container)
+			return registry.Result{ExitCode: 0, Output: s.ID, Data: map[string]any{"id": s.ID, "token": s.Token, "container": s.Container}}, nil
 		case "reconnect":
 			id, _ := args["id"].(string)
 			token, _ := args["token"].(string)

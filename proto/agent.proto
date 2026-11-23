@@ -79,6 +79,7 @@ message LogChunk {
 // 日志订阅控制（M2）：中控下发给 Agent 的订阅/退订指令。
 message LogControl {
   string action = 1;
-  string path = 2;
+  string path = 2; // target=file 时为日志文件绝对路径；target=container 时为容器名
   int32 tail_lines = 3;
+  string target = 4; // file（默认）| container（FR-A11 容器日志回流）
 }

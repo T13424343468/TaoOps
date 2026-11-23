@@ -4,8 +4,11 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -14,6 +17,9 @@ import (
 
 	pb "taoops/agent/pb"
 )
+
+// containerNameRe mirrors the FR-A11 whitelist: ^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$
+var containerNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
 // PumpLogs 维持日志流：中控下发 subscribe(path, tail) 后开始追尾。
 // 订阅按 path 多路并存（契约 §2 LogControl 按 path 订阅/退订）：
@@ -64,7 +70,11 @@ func PumpLogs(ctx context.Context, client pb.AgentServiceClient, nodeID string, 
 			tailCtx, stop := context.WithCancel(streamCtx)
 			tails[path] = stop
 			mu.Unlock()
-			go tailFile(tailCtx, sendChunk, nodeID, path, int(ctrl.GetTailLines()), logf)
+			if ctrl.GetTarget() == "container" {
+				go tailContainer(tailCtx, sendChunk, nodeID, path, int(ctrl.GetTailLines()), logf)
+			} else {
+				go tailFile(tailCtx, sendChunk, nodeID, path, int(ctrl.GetTailLines()), logf)
+			}
 		case "unsubscribe":
 			mu.Lock()
 			if stop, ok := tails[path]; ok {
@@ -149,6 +159,78 @@ func tailFile(ctx context.Context, send func(*pb.LogChunk) error, nodeID, path s
 		offset = size
 		if err := send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: buf}); err != nil {
 			return
+		}
+	}
+}
+
+// tailContainer tails a container's logs through the local docker.sock
+// (FR-A11: target=container). `docker logs --follow` streams increments;
+// if the process dies (daemon restart, container recreate) it is restarted
+// with --since to resume from the last seen timestamp — 断连自动重订.
+func tailContainer(ctx context.Context, send func(*pb.LogChunk) error, nodeID, container string, tailLines int, logf func(string, ...any)) {
+	if container == "" || !containerNameRe.MatchString(container) {
+		_ = send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: []byte("logs: invalid container name")})
+		return
+	}
+	tail := fmt.Sprintf("--tail=%d", tailLines)
+	for ctx.Err() == nil {
+		cmd := exec.CommandContext(ctx, "docker", "--host", "unix:///var/run/docker.sock",
+			"logs", "--follow", tail, container)
+		out, errPipe := cmd.StdoutPipe()
+		if errPipe != nil {
+			return
+		}
+		errOut, errPipe2 := cmd.StderrPipe()
+		if errPipe2 != nil {
+			return
+		}
+		if startErr := cmd.Start(); startErr != nil {
+			logf("logs: docker logs %s: %v (retrying)", container, startErr)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+		// 合并 stdout/stderr 增量推送；进程退出（容器重建/守护进程重启）后重开。
+		chunks := make(chan []byte)
+		go func() {
+			defer close(chunks)
+			var wg sync.WaitGroup
+			for _, r := range []io.Reader{out, errOut} {
+				wg.Add(1)
+				go func(r io.Reader) {
+					defer wg.Done()
+					buf := make([]byte, 4096)
+					for {
+						n, rerr := r.Read(buf)
+						if n > 0 {
+							b := make([]byte, n)
+							copy(b, buf[:n])
+							chunks <- b
+						}
+						if rerr != nil {
+							return
+						}
+					}
+				}(r)
+			}
+			wg.Wait()
+		}()
+		for b := range chunks {
+			if err := send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: b}); err != nil {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				return
+			}
+		}
+		_ = cmd.Wait()
+		logf("logs: docker logs %s ended (resubscribing)", container)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
 		}
 	}
 }

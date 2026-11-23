@@ -79,8 +79,9 @@ message LogChunk {
 
 message LogControl {
   string action     = 1; // subscribe | unsubscribe
-  string path       = 2; // 日志文件绝对路径
+  string path       = 2; // target=file 时为日志文件绝对路径；target=container 时为容器名
   int32  tail_lines = 3; // 订阅时回放的尾部行数，默认 0
+  string target     = 4; // 订阅目标类型：file（默认）| container（FR-A11 容器日志回流）
 }
 ```
 
@@ -97,7 +98,9 @@ message LogControl {
 ## 4. 指令白名单与执行路径（M1）
 
 - **Shell 白名单**：`echo`、`uname`、`df`、`free`、`uptime`。中控侧校验命令与参数（禁止 `;`、`|`、`&&`、反引号、`$(`）；白名单外一律 INVALID_ARGUMENT。
-- **模块命令白名单**：`sysinfo.overview`、`site.manage`、`db.manage`、`files.manage`、`term.manage`、`cron.manage`、`env.manage`、`fw.manage`、`backup.manage`、`ftp.manage`（M2，FR-A8）。模块命令的 `args` 采用 `key=value` 形式传入，Agent 侧还原为 `map[string]any`（无 `=` 的项忽略）。
+- **模块命令白名单**：`sysinfo.overview`、`site.manage`、`db.manage`、`files.manage`、`term.manage`、`cron.manage`、`env.manage`、`fw.manage`、`backup.manage`、`ftp.manage`、`sec.manage`、`docker.manage`（FR-A11）。模块命令的 `args` 采用 `key=value` 形式传入，Agent 侧还原为 `map[string]any`（无 `=` 的项忽略）。
+- **容器日志回流（FR-A11）**：`LogControl.target=container` 时 `path` 携带容器名，Agent 侧经 docker.sock 追尾容器日志并推送增量；`docker logs` 进程退出即自动重启续订（断连自动重订）。`target` 缺省按 `file` 处理，向后兼容。
+- **容器终端（FR-A11）**：`term.manage` 增 `op=attach_container`（args: `container=<容器名>`），会话创建与重连令牌语义不变；后续 `exec` 在该容器内执行（`docker exec <container> sh -c <command>`），session_id 路由不变。
 - **执行路径**：中控 Dispatch 校验通过后，经 `CommandStream` 双向流转发到目标节点，由 Agent 侧统一分发器执行（模块命令走模块注册表，Shell 命令直接 exec、不经 shell），结果按 `request_id` 回传。中控在超时上限内等待；节点命令通道未连接返回 UNAVAILABLE。
 - M2 起改为按节点授权的命令集。
 

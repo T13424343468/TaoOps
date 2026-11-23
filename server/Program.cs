@@ -50,7 +50,7 @@ app.MapGrpcService<AgentService>();
 app.MapGet("/", () => insecure ? "TaoOps Server M2 (insecure)" : "TaoOps Server M2");
 
 // WebSocket 桥接（契约 §1）：终端 /ws/agent/{node}/terminal[?session=]、
-// 日志 /ws/agent/{node}/logs?path=&tail=
+// 日志 /ws/agent/{node}/logs?path=&tail=[&target=file|container]（FR-A11 容器日志回流）
 app.Map("/ws/agent/{nodeId}/terminal", async (HttpContext ctx, NodeStreamHub streams) =>
 {
     await WsBridge.MapTerminal(ctx, streams, ctx.GetRouteValue("nodeId")!.ToString()!,
@@ -60,7 +60,8 @@ app.Map("/ws/agent/{nodeId}/logs", async (HttpContext ctx, NodeStreamHub streams
 {
     var path = ctx.Request.Query["path"].Count > 0 ? ctx.Request.Query["path"][0]! : "";
     var tail = int.TryParse(ctx.Request.Query["tail"], out var t) ? t : 0;
-    await WsBridge.MapLogs(ctx, streams, ctx.GetRouteValue("nodeId")!.ToString()!, path, tail);
+    var target = ctx.Request.Query["target"].Count > 0 ? ctx.Request.Query["target"][0]! : "file";
+    await WsBridge.MapLogs(ctx, streams, ctx.GetRouteValue("nodeId")!.ToString()!, path, tail, target);
 });
 
 // ---- WAF 管理 API（M3，PRD FR-B1）----
