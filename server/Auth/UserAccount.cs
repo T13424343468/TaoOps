@@ -2,12 +2,16 @@ using System.Text.Json.Serialization;
 
 namespace TaoOps.Server.Auth;
 
-/// <summary>面板用户角色：Admin 管理员（用户管理/审计导出）、Operator 操作员（日常运维操作）。</summary>
+/// <summary>
+/// 面板用户角色：Admin 管理员（用户管理/审计导出）、Operator 操作员（日常运维操作）、
+/// ReadOnly 只读观察员（仅查看，写方法一律 403，A12）。
+/// </summary>
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum UserRole
 {
     Admin,
     Operator,
+    ReadOnly,
 }
 
 /// <summary>

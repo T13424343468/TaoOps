@@ -24,6 +24,9 @@ public sealed class AuthMiddleware
         "/api/auth/bootstrap",
     ];
 
+    /// <summary>写方法集合（A12）：ReadOnly 角色命中即 403。</summary>
+    private static readonly string[] WriteMethods = ["POST", "PUT", "DELETE", "PATCH"];
+
     private readonly RequestDelegate _next;
 
     public AuthMiddleware(RequestDelegate next) => _next = next;
@@ -56,6 +59,13 @@ public sealed class AuthMiddleware
         {
             ctx.Response.StatusCode = 403;
             await ctx.Response.WriteAsJsonAsync(new { error = "admin role required" });
+            return;
+        }
+        // A12：只读角色禁止一切写方法（POST/PUT/DELETE/PATCH），读方法放行。
+        if (session.Role == UserRole.ReadOnly && WriteMethods.Contains(ctx.Request.Method))
+        {
+            ctx.Response.StatusCode = 403;
+            await ctx.Response.WriteAsJsonAsync(new { error = "read-only role" });
             return;
         }
         ctx.Items["taoops.user"] = session.Username;
