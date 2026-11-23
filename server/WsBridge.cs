@@ -93,6 +93,8 @@ public static class WsBridge
         finally
         {
             linked.Cancel();
+            // 控制台断开即退订，避免 Agent 侧 tail 协程按 path 累积泄漏。
+            session.Outbound.Writer.TryWrite(new LogControl { Action = "unsubscribe", Path = path });
         }
     }
 

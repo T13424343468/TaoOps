@@ -113,6 +113,33 @@ public class OpenRestyConfigGeneratorTests
         Assert.Equal(first.AccessLua, second.AccessLua);
         Assert.Equal(first.RulesJson, second.RulesJson);
     }
+
+    [Fact]
+    public void AccessLua_DecodesUriBeforeRegexMatch()
+    {
+        // A3（本班断言）：URI 先 ngx.unescape_uri 再匹配——%20 编码不得绕过 SQLi 规则；
+        // 日志仍记原始 URI（取证口径）。
+        var set = new WafRuleSet { Rules = [Rule("s1", WafRuleCategory.Sqli, WafRuleAction.Deny, "union")] };
+        var lua = OpenRestyConfigGenerator.Generate(set).AccessLua;
+        Assert.Contains("ngx.unescape_uri", lua);
+        Assert.Contains("pcall(ngx.unescape_uri", lua);
+        // 原始 URI 仅进日志行，不进匹配 subject。
+        Assert.Matches(@"local subject = decoded ..", lua);
+    }
+
+    [Fact]
+    public void AccessLua_IsInlineHandler_NotReturnedClosure()
+    {
+        // A2（本班断言，实弹班 ed407e3 同款）：access_by_lua_file 把文件体当 handler 直接执行，
+        // return 闭包永远不会被调用；产物必须是 do-block 内联执行体。
+        var set = new WafRuleSet { Rules = [Rule("s1", WafRuleCategory.Sqli, WafRuleAction.Deny, "p")] };
+        var lua = OpenRestyConfigGenerator.Generate(set).AccessLua;
+        Assert.DoesNotContain("return function()", lua);
+        Assert.Contains("do", lua);
+        // ngx.re 走全局表（974cc3a 同款）：require('ngx.re') 无 find。
+        Assert.DoesNotContain("require(\"ngx.re\")", lua);
+        Assert.Contains("local ngx_re = ngx.re", lua);
+    }
 }
 
 /// <summary>断言清单 A6/A9：规则存储持久化、原子写、导入导出。</summary>

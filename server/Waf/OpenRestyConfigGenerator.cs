@@ -119,7 +119,12 @@ public static class OpenRestyConfigGenerator
 
                 local function match_regex(rule)
                     if not ngx.var.request_uri and not ngx.var.http_user_agent then return false end
-                    local subject = (ngx.var.request_uri or "") .. " " .. (ngx.var.http_user_agent or "")
+                    -- URI 先解码再匹配：?id=1%20union%20select 不得绕过 SQLi 规则；
+                    -- 拦截/放行日志仍记原始 URI（取证口径）。
+                    local uri = ngx.var.request_uri or ""
+                    local ok_dec, decoded = pcall(ngx.unescape_uri, uri)
+                    if not ok_dec then decoded = uri end
+                    local subject = decoded .. " " .. (ngx.var.http_user_agent or "")
                     local from = ngx_re.find(subject, rule.pattern, "jo")
                     return from ~= nil
                 end

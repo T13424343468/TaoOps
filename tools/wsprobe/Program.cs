@@ -70,14 +70,20 @@ static async Task<int> ProbeTerm(string[] args)
         var seen = new StringBuilder();
         while (DateTime.UtcNow < deadline)
         {
+            // 取消未完成的 ReceiveAsync 会把 ClientWebSocket 置为 Aborted，
+            // 因此等待预算用"距截止的剩余时间"，到点自然退出，不做周期性打断。
             using var wait = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
-            wait.CancelAfter(TimeSpan.FromSeconds(3));
+            wait.CancelAfter(deadline - DateTime.UtcNow);
+            string text;
             try
             {
-                var text = await ReceiveAll(ws, wait.Token);
-                seen.Append(text);
+                text = await ReceiveAll(ws, wait.Token);
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) when (!cts.Token.IsCancellationRequested)
+            {
+                break; // 截止时间到，正常收尾判定
+            }
+            seen.Append(text);
             // 命令回显 + 输出都到达即视为通过（bash -i 会回显输入）
             var sofar = seen.ToString();
             if (sofar.Contains("ws-ok") && sofar.Contains("echo ws-ok"))
@@ -109,14 +115,19 @@ static async Task<int> ProbeLogs(string[] args)
         var seen = new StringBuilder();
         while (DateTime.UtcNow < deadline)
         {
+            // 同 ProbeTerm：周期性打断会把连接打成 Aborted，改用剩余时间预算。
             using var wait = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
-            wait.CancelAfter(TimeSpan.FromSeconds(3));
+            wait.CancelAfter(deadline - DateTime.UtcNow);
+            string text;
             try
             {
-                var text = await ReceiveAll(ws, wait.Token);
-                seen.Append(text);
+                text = await ReceiveAll(ws, wait.Token);
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) when (!cts.Token.IsCancellationRequested)
+            {
+                break; // 截止时间到，正常收尾判定
+            }
+            seen.Append(text);
             if (seen.ToString().Contains(expect))
             {
                 Console.WriteLine($"PASS logs: observed {expect}");
