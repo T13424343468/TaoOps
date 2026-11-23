@@ -160,3 +160,25 @@ export const NODES_PAGE: ModulePageConfig = {
     { label: "安装 Agent", command: "dispatch.install-agent" },
   ],
 };
+
+export const DOCKER_PAGE: ModulePageConfig = {
+  title: "Docker 管理",
+  description: "pg-docker",
+  columns: [
+    { key: "name", title: "容器" }, { key: "image", title: "镜像" }, { key: "state", title: "状态" },
+    { key: "ports", title: "端口" }, { key: "status", title: "运行详情" },
+  ],
+  rows: [
+    { name: "web", image: "nginx:1.25", state: "running", ports: "80/tcp", status: "Up 2 hours" },
+    { name: "db", image: "mysql:8.0", state: "exited", ports: "3306/tcp", status: "Exited (0) 3 hours ago" },
+  ],
+  commands: [
+    { label: "启动", command: "docker.manage", args: ["op=start"] },
+    { label: "停止", command: "docker.manage", args: ["op=stop"] },
+    { label: "重启", command: "docker.manage", args: ["op=restart"] },
+    { label: "日志", command: "docker.manage", args: ["op=logs"] },
+    { label: "进终端", command: "docker.manage", args: ["op=terminal"] },
+    { label: "拉取镜像", command: "docker.manage", args: ["op=image_pull"] },
+    { label: "删除镜像", command: "docker.manage", args: ["op=image_remove"] },
+  ],
+};

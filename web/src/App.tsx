@@ -20,6 +20,7 @@ const NAV = [
     { key: "/ftp", label: "FTP" },
     { key: "/cron", label: "计划任务" },
     { key: "/env", label: "环境变量" },
+    { key: "/docker", label: "Docker 管理" },
     { key: "/lb", label: "负载均衡" },
     { key: "/ssl", label: "SSL 证书" },
   ]},
