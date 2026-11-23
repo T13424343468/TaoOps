@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -350,6 +351,9 @@ func toInt(v any) (int, bool) {
 		return int(t), true
 	case float64:
 		return int(t), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(t))
+		return n, err == nil
 	}
 	return 0, false
 }

@@ -211,6 +211,24 @@ app.MapGet("/api/auth/permissions", (HttpContext ctx) =>
 
 // ---- 节点列表与 HTTP 下发桥（项5，契约 §6）----
 app.MapGet("/api/nodes", (NodeCommandBridge bridge) => Results.Json(bridge.ListNodes()));
+// FR-A11 Docker 专用端点：按操作分级鉴权（DockerPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/docker", async (string id, DockerOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DockerPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for docker op" }, statusCode: 403);
+    }
+    var args = DockerOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "docker.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 app.MapPost("/api/nodes/{id}/cmd", async (string id, NodeCmdRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
     try
@@ -262,3 +280,20 @@ public sealed record ToggleEnabled(bool Enabled);
 public sealed record BootstrapRequest(string? Username, string? Password);
 public sealed record CreateUserRequest(string? Username, string? Password, string? Role);
 public sealed record NodeCmdRequest(string? Command, IReadOnlyList<string>? Args, int TimeoutMs);
+
+// ---- FR-A11 Docker 下发请求 ----
+public sealed record DockerOpRequest(string? Op, string? Name, string? Ref, string? Command, int? Tail, int TimeoutMs);
+
+internal static class DockerOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(DockerOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
+        if (!string.IsNullOrEmpty(req.Ref)) args.Add($"ref={req.Ref}");
+        if (!string.IsNullOrEmpty(req.Command)) args.Add($"command={req.Command}");
+        if (req.Tail is int tail) args.Add($"tail={tail}");
+        return args;
+    }
+}
