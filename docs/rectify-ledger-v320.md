@@ -42,3 +42,19 @@
 
 - 2026-11-23 04:30：dotnet 73/73 PASS；Go 16 包 ok；提交 298c5d4（A4 订阅托管服务 + A2 实弹遗留归并 + 修红）。
 - 覆盖账：/tmp/cover/94cedaa5-6cf0-4399-8bda-cb0289d2afe4/coverage.cobertura.xml（归档随出包做 SHA-256）。
+
+## 七、覆盖账终态（2026-11-23 覆盖账攻坚班）
+
+- 全量测试：dotnet **220/220 PASS**（vstest 连跑 3 轮稳定全绿；e2e_loop 7/7、e2e_m2 9/9、Go build/vet/test 绿不变）。
+- 手写业务代码口径（Grpc 生成代码单列不计入）：**行覆盖 1288/1293 = 99.61%，分支覆盖 525/544 = 96.51%**。
+- 本轮补测（CoverageBackfillTests 增补 + 修路径）：账本坏行测试落盘路径修正（waf/sec/audit 子目录，此前写错路径未命中重载逻辑）、cmd 成功路径假通道回执、cmd 缺 command 400、空体/半体登录、缺口令建号、无 Bearer 前缀登出、数据目录缺省真实装配（含非 insecure 横幅）、端口 0 回退、托管服务 OCE 收尾（反射取消内部令牌命中 break）、无 logger 静默巡检、令牌 SESSION_MS 合法值、静默时段 hourOverride 缺省、AuthPolicy 零值/白名单未设、WafRuleStore FilePath + null 规则文件回退。
+- **剩余缺口全部结构性不可达或纯竞态窗口，逐条挂账**：
+  1. `AuthMiddleware 36B` / `AuditMiddleware 18B`：`Request.Path.Value ?? ""` —— 服务器管道中 Path.Value 恒非空，null 侧不可达。
+  2. `Program 106B`：`RemoteIpAddress?.ToString() ?? ""` —— TestServer 与真实监听均恒有远端地址。
+  3. `Program 122B` / `189B`：`Items["taoops.user"] ?? ""` —— 鉴权中间件对已认证请求恒写入该键。
+  4. `Program 149B`（1/4）：`Enum.TryParse` 失败 → ReadOnly —— 会话角色恒为合法枚举值，失败侧管道内不可达。
+  5. `SecEventStore 62B` / `WafEventStore 74B`（各 1/6）：`v.GetString() ?? ""` —— 前置 `ValueKind == String` 保证 GetString 恒非空。
+  6. `StreamIngestorHostedService 14L`：静态字段初始化，类加载即命中，属统计口径；`117B`：`task.Exception?.` —— faulted 任务恒带 Exception。
+  7. `NodeCommandBridge 69B`：`command ?? ""` null 侧 —— Validate 前置校验，null 命令先行抛 400，构造器不可达。
+  8. `WsBridge 55/56L、109/110L`（OCE/IOException 捕获行）、`35/96B`（异步迭代器状态分支）、`117B/61B`（泵收尾 OCE 捕获）、`123B`（WS 非 Open 前置返回）：均为断连竞态窗口，确定性触发需注入桩替换真实 WS 对象，收益不抵改造风险，挂账。
+- 覆盖率采集：`dotnet test --collect:"XPlat Code Coverage"`，cobertura 口径按行级合并（同文件多类条目取最大命中）。
