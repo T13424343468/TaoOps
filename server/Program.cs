@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using System.Text.Json;
+using TaoOps.Server.Alerts;
 using TaoOps.Server.Audit;
 using TaoOps.Server.Auth;
 using TaoOps.Server.Sec;
@@ -27,6 +28,10 @@ builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<SecEventStore>(_ => new SecEventStore(wafDataDir));
 builder.Services.AddSingleton<SecEventIngestor>();
 builder.Services.AddSingleton<IntrusionDetector>();
+
+// 统一告警中心（FR-A19）：落盘 dataDir/alerts/，入侵检测与心跳磁盘水位接线。
+builder.Services.AddSingleton<AlertStore>(_ => new AlertStore(wafDataDir));
+builder.Services.AddSingleton<AlertCenter>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
 builder.Services.AddHostedService<StreamIngestorHostedService>();
 
@@ -182,6 +187,15 @@ app.MapGet("/api/sec/events", (SecEventStore store, string? nodeId, long? from, 
 // ---- 企业层入侵检测告警查询（A11）：按类型/级别/时间过滤 ----
 app.MapGet("/api/sec/alerts", (IntrusionDetector detector, string? type, string? severity, long? fromMs, long? toMs) =>
     Results.Json(detector.Query(type, severity, fromMs, toMs)));
+
+// ---- 统一告警中心（FR-A19）：列表过滤/未读数/标记已读，保留默认 90 天 ----
+app.MapGet("/api/alerts", (AlertStore store, string? level, string? source, string? nodeId,
+        long? from, long? to, bool? unread) =>
+    Results.Json(store.Query(level, source, nodeId, from, to, unread)));
+app.MapGet("/api/alerts/unread", (AlertStore store) => Results.Json(new { count = store.UnreadCount() }));
+app.MapPost("/api/alerts/{id}/read", (string id, AlertStore store) =>
+    store.MarkRead(id) ? Results.Ok() : Results.NotFound());
+app.MapPost("/api/alerts/read-all", (AlertStore store) => Results.Json(new { marked = store.MarkAllRead() }));
 
 // ---- 企业层 RBAC 权限清单（A13）：静态矩阵可查 ----
 app.MapGet("/api/auth/permissions", (HttpContext ctx) =>

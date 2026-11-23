@@ -35,6 +35,8 @@ public sealed class SecAlert
 public sealed class IntrusionDetector
 {
     private readonly AuditStore _audit;
+    /// <summary>统一告警中心（FR-A19）：非空时告警同步转发落账（级别按 severity 映射）。</summary>
+    private readonly Alerts.AlertCenter? _alertCenter;
     private readonly object _lock = new();
 
     // A9：用户 → 已见过的 action 集合（首次执行新 action 才告警）。
@@ -44,7 +46,11 @@ public sealed class IntrusionDetector
     // A11：告警内存索引（审计链为真源，此处为查询副本）。
     private readonly List<SecAlert> _alerts = [];
 
-    public IntrusionDetector(AuditStore audit) => _audit = audit;
+    public IntrusionDetector(AuditStore audit, Alerts.AlertCenter? alertCenter = null)
+    {
+        _audit = audit;
+        _alertCenter = alertCenter;
+    }
 
     // ---- 旋钮（环境变量覆盖，默认从严）----
 
@@ -193,6 +199,7 @@ public sealed class IntrusionDetector
         {
             _alerts.Add(alert);
         }
+        _alertCenter?.IngestIntrusion(alert);
         return alert;
     }
 }
