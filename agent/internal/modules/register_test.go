@@ -26,6 +26,7 @@ func TestRegisterAllInstallsEveryModule(t *testing.T) {
 		"backup.manage",
 		"cron.manage",
 		"db.manage",
+		"docker.manage",
 		"env.manage",
 		"files.manage",
 		"ftp.manage",
@@ -57,7 +58,7 @@ func TestRegisterAllTwiceIsIdempotent(t *testing.T) {
 	if err := RegisterAll(r, p); err != nil {
 		t.Fatalf("second RegisterAll: %v", err)
 	}
-	if len(r.Names()) != 12 {
+	if len(r.Names()) != 13 {
 		t.Fatalf("names = %v", r.Names())
 	}
 }
