@@ -15,8 +15,10 @@ import (
 	pb "taoops/agent/pb"
 )
 
-// PumpLogs 维持日志流：中控下发 subscribe(path, tail) 后开始追尾；
-// 新订阅替换旧订阅；unsubscribe 停止追尾。
+// PumpLogs 维持日志流：中控下发 subscribe(path, tail) 后开始追尾。
+// 订阅按 path 多路并存（契约 §2 LogControl 按 path 订阅/退订）：
+// 事件回流自动订阅（WAF/SEC）与控制台看日志互不顶掉；
+// 同 path 重复 subscribe 视为刷新（停旧起新）；unsubscribe 停对应 path。
 func PumpLogs(ctx context.Context, client pb.AgentServiceClient, nodeID string, logf func(string, ...any)) error {
 	streamCtx, cancel := context.WithCancel(metadata.AppendToOutgoingContext(ctx, "x-node-id", nodeID))
 	defer cancel()
@@ -27,39 +29,64 @@ func PumpLogs(ctx context.Context, client pb.AgentServiceClient, nodeID string, 
 	}
 
 	var (
-		mu       sync.Mutex
-		stopTail context.CancelFunc = func() {}
+		mu    sync.Mutex
+		tails = make(map[string]context.CancelFunc) // path → stop
 	)
-	defer stopTail()
+	defer func() {
+		mu.Lock()
+		for _, stop := range tails {
+			stop()
+		}
+		mu.Unlock()
+	}()
+
+	// 同一条 gRPC 流上有多个尾随协程（中控订阅 + 事件回流自动订阅），
+	// Send 必须串行，否则并发写流会打挂整条 LogStream（e2e_m2 ws logs 红灯根因）。
+	sendChunk := func(chunk *pb.LogChunk) error {
+		mu.Lock()
+		defer mu.Unlock()
+		return stream.Send(chunk)
+	}
 
 	for {
 		ctrl, err := stream.Recv()
 		if err != nil {
 			return err
 		}
+		path := ctrl.GetPath()
 		switch ctrl.GetAction() {
 		case "subscribe":
 			mu.Lock()
-			stopTail()
+			if stop, ok := tails[path]; ok {
+				stop()
+				delete(tails, path)
+			}
 			tailCtx, stop := context.WithCancel(streamCtx)
-			stopTail = stop
+			tails[path] = stop
 			mu.Unlock()
-			go tailFile(tailCtx, stream, nodeID, ctrl.GetPath(), int(ctrl.GetTailLines()), logf)
+			go tailFile(tailCtx, sendChunk, nodeID, path, int(ctrl.GetTailLines()), logf)
 		case "unsubscribe":
 			mu.Lock()
-			stopTail()
-			stopTail = func() {}
+			if stop, ok := tails[path]; ok {
+				stop()
+				delete(tails, path)
+			}
 			mu.Unlock()
 		}
 	}
 }
 
 // tailFile 先回放文件尾部 tailLines 行，再轮询推送新增字节。
-func tailFile(ctx context.Context, stream pb.AgentService_LogStreamClient, nodeID, path string, tailLines int, logf func(string, ...any)) {
+// 文件尚不存在时等待出现（事件回流订阅的日志路径由 OpenResty/防爆破
+// 首次写事件时创建），不退出——退出会让订阅静默失效。
+func tailFile(ctx context.Context, send func(*pb.LogChunk) error, nodeID, path string, tailLines int, logf func(string, ...any)) {
 	if path == "" || !strings.HasPrefix(path, "/") {
-		_ = stream.Send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: []byte("logs: path must be absolute")})
+		_ = send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: []byte("logs: path must be absolute")})
 		return
 	}
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
 	offset := int64(0)
 	if tailLines > 0 {
 		if data, err := os.ReadFile(path); err == nil {
@@ -68,18 +95,30 @@ func tailFile(ctx context.Context, stream pb.AgentService_LogStreamClient, nodeI
 				lines = lines[len(lines)-tailLines:]
 			}
 			offset = int64(len(data))
-			_ = stream.Send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: []byte(strings.Join(lines, "\n"))})
+			if err := send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: []byte(strings.Join(lines, "\n"))}); err != nil {
+				return
+			}
 		}
 	} else if fi, err := os.Stat(path); err == nil {
 		offset = fi.Size()
 	}
 
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	f, err := os.Open(path)
-	if err != nil {
-		logf("logs: open %s: %v", path, err)
-		return
+	var f *os.File
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		var err error
+		f, err = os.Open(path)
+		if err == nil {
+			break
+		}
+		logf("logs: open %s: %v (waiting for file)", path, err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 	defer f.Close()
 
@@ -108,7 +147,7 @@ func tailFile(ctx context.Context, stream pb.AgentService_LogStreamClient, nodeI
 			return
 		}
 		offset = size
-		if err := stream.Send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: buf}); err != nil {
+		if err := send(&pb.LogChunk{NodeId: nodeID, Ts: nowMs(), Data: buf}); err != nil {
 			return
 		}
 	}
