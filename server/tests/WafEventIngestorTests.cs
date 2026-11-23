@@ -49,6 +49,32 @@ public class WafEventIngestorTests : IDisposable
     }
 
     [Fact]
+    public void ParseChunk_LogLineWithNormUri_DualValueParsed()
+    {
+        // 双值审计回流：Lua 日志同时带 uri（原始）与 norm_uri（归一化），解析两侧都落账。
+        var ingestor = new WafEventIngestor(new NodeStreamHub(), new WafEventStore(_dir));
+        var tail = new StringBuilder();
+        var line = "TAOOPS_WAF {\"event\":\"deny\",\"rule_id\":\"s1\",\"ip\":\"1.2.3.4\","
+            + "\"uri\":\"/?id=1%2527%20or%20%271%27=%271\",\"norm_uri\":\"/?id=1' or '1'='1\"}";
+        var ev = Assert.Single(ingestor.ParseChunk(line + "\n", tail, "n"));
+
+        Assert.Equal("/?id=1%2527%20or%20%271%27=%271", ev.Uri);
+        Assert.Equal("/?id=1' or '1'='1", ev.NormUri);
+    }
+
+    [Fact]
+    public void ParseChunk_LogLineWithoutNormUri_NormUriEmpty()
+    {
+        // 旧格式日志行（无 norm_uri 字段）兼容：归一化值缺省空串，不崩不误填。
+        var ingestor = new WafEventIngestor(new NodeStreamHub(), new WafEventStore(_dir));
+        var tail = new StringBuilder();
+        var ev = Assert.Single(ingestor.ParseChunk(
+            "TAOOPS_WAF {\"event\":\"log\",\"rule_id\":\"s1\",\"uri\":\"/a\"}\n", tail, "n"));
+        Assert.Equal("/a", ev.Uri);
+        Assert.Equal("", ev.NormUri);
+    }
+
+    [Fact]
     public void ParseChunk_MalformedLines_SkippedNotCrash()
     {
         // A7：畸形行跳过不崩；空输入零事件。

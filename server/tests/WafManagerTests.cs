@@ -118,13 +118,112 @@ public class OpenRestyConfigGeneratorTests
     public void AccessLua_DecodesUriBeforeRegexMatch()
     {
         // A3（本班断言）：URI 先 ngx.unescape_uri 再匹配——%20 编码不得绕过 SQLi 规则；
-        // 日志仍记原始 URI（取证口径）。
+        // 拦截/放行日志仍记原始 URI（取证口径）。
         var set = new WafRuleSet { Rules = [Rule("s1", WafRuleCategory.Sqli, WafRuleAction.Deny, "union")] };
         var lua = OpenRestyConfigGenerator.Generate(set).AccessLua;
         Assert.Contains("ngx.unescape_uri", lua);
         Assert.Contains("pcall(ngx.unescape_uri", lua);
-        // 原始 URI 仅进日志行，不进匹配 subject。
-        Assert.Matches(@"local subject = decoded ..", lua);
+        // 归一化副本进匹配 subject，原始 URI 仅进日志行。
+        Assert.Matches(@"local subject = norm_uri ..", lua);
+    }
+
+    // ---- 归一化前置层（设计层方案验收口径：四类编码样本逐条落断言）----
+
+    [Fact]
+    public void AccessLua_UrlDecode_LoopsUntilStable_WithRoundCap()
+    {
+        // 样本 ?id=1%20union%20select（单轮）与 ?id=1%2527...（双重编码）：
+        // 解码循环至稳定，最多 3 轮——%2525 链不得无限套，也不得只解一轮就放行。
+        var lua = OpenRestyConfigGenerator.Generate(new WafRuleSet()).AccessLua;
+        Assert.Contains("local MAX_URL_DECODE_ROUNDS = 3", lua);
+        Assert.Contains("local function url_decode_stable(s)", lua);
+        Assert.Matches(@"for _ = 1, MAX_URL_DECODE_ROUNDS do", lua);
+        // 每轮解码后若再无 % 即停（防无谓空转）。
+        Assert.Contains(@"if not s:find(""%"", 1, true) then break end", lua);
+        // 解码失败回退原值，不崩。
+        Assert.Contains("if not ok or decoded == s then break end", lua);
+    }
+
+    [Fact]
+    public void AccessLua_HtmlEntityDecoded_BeforeMatch()
+    {
+        // 样本 &quot; / &#x27;：HTML 实体解码进归一化副本，实体包装的注入串不得绕过。
+        var lua = OpenRestyConfigGenerator.Generate(new WafRuleSet()).AccessLua;
+        Assert.Contains("local function html_unescape(s)", lua);
+        Assert.Contains("[\"&quot;\"]", lua);
+        Assert.Contains("[\"&#x27;\"]", lua);
+        Assert.Contains("[\"&apos;\"]", lua);
+        Assert.Contains("[\"&lt;\"]", lua);
+        Assert.Contains("[\"&gt;\"]", lua);
+        // 归一化主流程在路径归一化之前调用实体解码。
+        Assert.Matches(@"s = url_decode_stable\(s\)\s*\n\s*s = html_unescape\(s\)", lua);
+    }
+
+    [Fact]
+    public void AccessLua_SqlInlineCommentStripped_FromMatchCopy_KeptInAudit()
+    {
+        // 样本 uni/**/on%20select：匹配副本剥离 /**/，原始值保留进审计日志（双值对账）。
+        var lua = OpenRestyConfigGenerator.Generate(new WafRuleSet()).AccessLua;
+        Assert.Contains("local function strip_sql_inline_comments(s)", lua);
+        Assert.Contains(@"/%*%*/", lua);
+        // 日志行记原始 uri（含注释原样），归一化值另存 norm_uri。
+        Assert.Contains("\"uri\":\"' .. raw_uri .. '\",\"norm_uri\":\"' .. norm_uri .. '\"}", lua);
+    }
+
+    [Fact]
+    public void AccessLua_CaseNormalized_MatchOnLowercaseCopy()
+    {
+        // 样本 UnIoN：匹配副本小写化，规则正则由生成器小写化进 rules.json（规则数据不动）。
+        var set = new WafRuleSet { Rules = [Rule("s1", WafRuleCategory.Sqli, WafRuleAction.Deny, "UnIoN")] };
+        var bundle = OpenRestyConfigGenerator.Generate(set);
+        Assert.Contains("return s:lower()", bundle.AccessLua);
+        // 产物数据文件里模式已小写：UnIoN → union。
+        Assert.Contains("\"union\"", bundle.RulesJson);
+        Assert.DoesNotContain("UnIoN", bundle.RulesJson);
+        // 非 IP/CC 类目才小写：IP 黑名单模式原样保留。
+        var ipSet = new WafRuleSet
+        {
+            Rules = [Rule("b1", WafRuleCategory.IpBlacklist, WafRuleAction.Deny, "203.0.113.9")],
+        };
+        Assert.Contains("203.0.113.9", OpenRestyConfigGenerator.Generate(ipSet).RulesJson);
+    }
+
+    [Fact]
+    public void AccessLua_PathNormalized_ForUriMatchCopyOnly()
+    {
+        // 路径归一化仅作用在 uri 匹配副本：// → /、/./ → /、\ → /。
+        var lua = OpenRestyConfigGenerator.Generate(new WafRuleSet()).AccessLua;
+        Assert.Contains("local function normalize_path(s)", lua);
+        Assert.Contains(@"s:gsub(""//+"", ""/"")", lua);
+        Assert.Contains(@"s:gsub(""/%./"", ""/"")", lua);
+        Assert.Contains("s:gsub(\"\\\\\", \"/\")", lua);
+        // 仅 uri 传 is_uri=true；UA 副本不做路径归一化。
+        Assert.Contains("local norm_uri = normalize_for_match(raw_uri, true)", lua);
+        Assert.Contains("normalize_for_match(ngx.var.http_user_agent or \"\", false)", lua);
+    }
+
+    [Fact]
+    public void AccessLua_DualValueAudit_BothDenyAndLogEvents()
+    {
+        // 双值审计：deny 与 log 两条事件都同时携带原始 uri 与归一化 norm_uri。
+        var lua = OpenRestyConfigGenerator.Generate(new WafRuleSet()).AccessLua;
+        Assert.Matches(@"event"":""deny""[\s\S]*""uri"":""' \.\. raw_uri \.\. '"",""norm_uri"":""' \.\. norm_uri", lua);
+        Assert.Matches(@"event"":""log""[\s\S]*""uri"":""' \.\. raw_uri \.\. '"",""norm_uri"":""' \.\. norm_uri", lua);
+    }
+
+    [Fact]
+    public void AccessLua_WhitelistShortCircuit_AndCcCounting_UnaffectedByNormalization()
+    {
+        // 白名单仍放行（Allow 短路先于 Deny），CC 计数不走归一化（按 IP 计数，与编码无关）。
+        var lua = OpenRestyConfigGenerator.Generate(new WafRuleSet()).AccessLua;
+        Assert.True(lua.IndexOf("if rule.action == \"Allow\"", StringComparison.Ordinal)
+            < lua.IndexOf("if rule.action == \"Deny\"", StringComparison.Ordinal));
+        Assert.Contains("hit = match_ip(rule, ip)", lua);
+        Assert.Contains("hit = match_cc(rule, now)", lua);
+        Assert.Contains("dict:incr(key, 1, 0, rule.windowSeconds or 60)", lua);
+        // CC/IP 分支不经过归一化副本。
+        Assert.DoesNotContain("normalize_for_match", lua[(lua.IndexOf("local function match_cc", StringComparison.Ordinal))
+            ..lua.IndexOf("-- Normalization layer", StringComparison.Ordinal)]);
     }
 
     [Fact]
