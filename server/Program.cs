@@ -11,6 +11,7 @@ builder.Services.AddGrpc();
 builder.Services.AddSingleton<NodeRegistry>();
 builder.Services.AddSingleton<NodeCommandHub>();
 builder.Services.AddSingleton<NodeStreamHub>();
+builder.Services.AddSingleton<NodeCommandBridge>();
 
 // WAF 管理面（M3）：规则真源与事件账本落数据目录。
 var wafDataDir = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR") ?? "/var/lib/taoops/server";
@@ -25,6 +26,7 @@ builder.Services.AddSingleton<AuditStore>(_ => new AuditStore(wafDataDir));
 builder.Services.AddSingleton<AuthService>();
 builder.Services.AddSingleton<SecEventStore>(_ => new SecEventStore(wafDataDir));
 builder.Services.AddSingleton<SecEventIngestor>();
+builder.Services.AddSingleton<IntrusionDetector>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
 builder.Services.AddHostedService<StreamIngestorHostedService>();
 
@@ -195,9 +197,40 @@ app.MapGet("/api/audit/export", (AuditStore store, string? format) =>
 app.MapGet("/api/sec/events", (SecEventStore store, string? nodeId, long? from, long? to) =>
     Results.Json(store.Query(nodeId, from, to)));
 
+// ---- 企业层入侵检测告警查询（A11）：按类型/级别/时间过滤 ----
+app.MapGet("/api/sec/alerts", (IntrusionDetector detector, string? type, string? severity, long? fromMs, long? toMs) =>
+    Results.Json(detector.Query(type, severity, fromMs, toMs)));
+
+// ---- 企业层 RBAC 权限清单（A13）：静态矩阵可查 ----
+app.MapGet("/api/auth/permissions", (HttpContext ctx) =>
+{
+    var role = Enum.TryParse<UserRole>(ctx.Items["taoops.role"]?.ToString(), out var r) ? r : UserRole.ReadOnly;
+    return Results.Json(new
+    {
+        role = role.ToString(),
+        permissions = PermissionMatrix.For(role).Order().ToArray(),
+        all_permissions = Permission.All,
+    });
+});
+
+// ---- 节点列表与 HTTP 下发桥（项5，契约 §6）----
+app.MapGet("/api/nodes", (NodeCommandBridge bridge) => Results.Json(bridge.ListNodes()));
+app.MapPost("/api/nodes/{id}/cmd", async (string id, NodeCmdRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, req.Command, req.Args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", http.Items["taoops.role"]?.ToString() ?? "",
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+
 app.Run();
 
 // ---- 请求模型（M3 安全班）----
 public sealed record LoginRequest(string? Username, string? Password);
 public sealed record BootstrapRequest(string? Username, string? Password);
 public sealed record CreateUserRequest(string? Username, string? Password, string? Role);
+public sealed record NodeCmdRequest(string? Command, IReadOnlyList<string>? Args, int TimeoutMs);

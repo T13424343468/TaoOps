@@ -107,3 +107,16 @@ message LogControl {
 - `CommandStream` 由 Agent 在注册成功后发起，请求头携带 `x-node-id`；中控按该头挂接节点命令通道，流断开即摘除并使该节点在途请求失败。
 - 心跳流中断超过 3 个周期（45s）标记节点离线。
 - 本契约、`src/proto/agent.proto`、两端实现三者必须一致；不一致按缺陷处理。
+
+## 6. 面板 HTTP 下发桥（M3 企业层项5）
+
+面板经 HTTP 触达节点，中控把请求转译为与 gRPC `Dispatch` 同一执行路径（经 `CommandStream` 转发），复用同一白名单校验（§4）与超时上限；每次下发进 FR-D4 审计哈希链（Action=`node.cmd`，Target=请求路径，Result=exit_code）。
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/api/nodes` | GET | 列出全部已知节点：`node_id`、`agent_id`、`hostname`、`last_seen_ms`、`registered_at_ms`、`command_connected`（命令通道是否在连）。 |
+| `/api/nodes/{id}/cmd` | POST | 向节点下发指令。请求体 `{command, args?, timeout_ms?}`；`command` 必须命中 §4 白名单，`timeout_ms` 缺省 30000、上限 300000。响应为 `{exit_code, output, request_id}`。 |
+
+- 鉴权：走 `/api` 统一 RBAC 中间件；只读角色（ReadOnly）写方法 403，Operator/Admin 可下发。
+- 错误映射：节点未注册 → 404；命令不在白名单或参数含注入字符 → 400；节点命令通道未连接 → 503；下发超时 → 504。
+- `request_id` 由中控生成（UUID），与 gRPC 路径同口径，用于结果匹配与审计溯源。
