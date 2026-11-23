@@ -66,3 +66,6 @@
 - 出包节奏：老板明确「不着急出」，11-25 出包闸顺延，新范围收口后另定出包日。
 - **FR-A19 告警中心已落码（2026-11-23）**：AlertStore（dataDir/alerts/alerts.jsonl，保留默认 90 天可配）+ AlertCenter（磁盘水位 ≥90% 边缘触发 critical/<85% 迟滞复位；入侵检测 severity 映射转发）+ /api/alerts 四端点（列表过滤/未读数/单条已读/全部已读）；critical 触发推送随 FR-A20 补验（验收拆两段）。新增 15 用例，235/235 全绿（连跑两轮稳定）。
 - 竞品差距清单（宝塔/1Panel 对账）已归档：第三档记入待办池永不主动推进。
+- **FR-A11 Docker 容器与镜像管理已落码（2026-11-24）**：四层全通——Agent 模块（docker.manage 九类操作：list/start/stop/restart/logs/terminal/image_list/image_pull/image_remove，docker.sock 限定 --host unix://，容器名/镜像引用/镜像源三白名单正则，逐操作审计留痕，提交 ddf5206）；中控下发桥（AgentService 白名单 + 专用端点 /api/nodes/{id}/docker 按 DockerPolicy 分级鉴权：terminal/image_remove=Admin、启停/拉取=Operator+、读=ReadOnly，提交 5903cd5）；前端页（Docker 管理页 + 导航路由，提交 4c3d0da）；容器日志回流（LogControl 增 target=file|container，契约先行改文档再改 proto，Agent tailContainer 经 docker.sock --follow 断连自动重订，term.manage 增 op=attach_container 会话路由不变，提交 d2119dc）。验证：Agent 全量绿、中控 245/245（连跑两轮稳定）、e2e_loop 7/7、e2e_m2 9/9。
+- FR-A11 验收口径对账：Action 枚举 9 类审计逐类覆盖 ✓；三正则 ✓；docker.sock 限定 ✓；RBAC 分级 ✓；日志断连自动重订 ✓；拉取进度当前为 docker pull 原始层进度输出（可查），结构化层数/字节进度接口记入 FR-A12 后补强项。
+- 环境备注（2026-11-24）：沙箱工具链重置，Go 1.23.4 与 .NET 10.0.404 重装；Release 构建内存超限被杀（全局 OOM ~2.5GB），端到端改用 Debug 产物跑通；wsprobe 探针重编译后 e2e_m2 全过。
