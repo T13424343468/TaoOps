@@ -59,6 +59,12 @@ public class NodeCommandHub
                 }
                 catch (OperationCanceledException) { }
                 catch (RpcException) { }
+                finally
+                {
+                    // 读侧结束（Agent 断开或流收尾）即关闭写侧，让挂接协程自然收尾，
+                    // 不必等外部取消（gRPC 请求流关闭即等价于通道断开）。
+                    channel.Outbound.Writer.TryComplete();
+                }
             }, CancellationToken.None);
 
             await foreach (var request in channel.Outbound.Reader.ReadAllAsync(ct))
@@ -96,6 +102,13 @@ public class NodeCommandHub
             channel.Pending.TryRemove(request.RequestId, out _);
             throw new RpcException(new Status(StatusCode.DeadlineExceeded,
                 $"dispatch timed out after {timeout.TotalMilliseconds}ms"));
+        }
+        catch (ChannelClosedException)
+        {
+            // 通道在读侧收尾后关闭：等价于 Agent 断开，按 UNAVAILABLE 上抛而非悬挂到超时。
+            channel.Pending.TryRemove(request.RequestId, out _);
+            throw new RpcException(new Status(StatusCode.Unavailable,
+                $"node {nodeId} command channel disconnected"));
         }
     }
 

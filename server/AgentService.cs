@@ -156,6 +156,11 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
             }
             catch (OperationCanceledException) { }
             catch (RpcException) { }
+            finally
+            {
+                // 请求流收尾（Agent 断开）即关闭写侧，让下行泵自然退出，不必等外部取消。
+                session.Outbound.Writer.TryComplete();
+            }
         }, CancellationToken.None);
 
         try
@@ -183,6 +188,11 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
             }
             catch (OperationCanceledException) { }
             catch (RpcException) { }
+            finally
+            {
+                // 请求流收尾（Agent 断开）即关闭写侧，让下行泵自然退出，不必等外部取消。
+                session.Outbound.Writer.TryComplete();
+            }
         }, CancellationToken.None);
 
         try

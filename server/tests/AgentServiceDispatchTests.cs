@@ -47,6 +47,15 @@ public class AgentServiceDispatchTests
         return (service, registry, hub);
     }
 
+    private static (Services.AgentService Service, NodeRegistry Registry, NodeCommandHub Hub, NodeStreamHub Streams) CreateFull()
+    {
+        var registry = new NodeRegistry();
+        var hub = new NodeCommandHub();
+        var streams = new NodeStreamHub();
+        var service = new Services.AgentService(registry, hub, streams, NullLogger<Services.AgentService>.Instance);
+        return (service, registry, hub, streams);
+    }
+
     private static string RegisterNode(NodeRegistry registry)
     {
         var node = registry.Register(new RegisterRequest { AgentId = "a-1", Hostname = "h" });
@@ -177,6 +186,189 @@ public class AgentServiceDispatchTests
         Assert.Equal(StatusCode.InvalidArgument, ex.StatusCode);
     }
 
+    // ---- 流式通道全覆盖（Register 成功路径 / Heartbeat / CommandStream / TermStream / LogStream）----
+
+    [Fact]
+    public async Task Register_ValidAgent_ReturnsNodeIdAndConfig()
+    {
+        var (service, registry, _) = Create();
+        var res = await service.Register(new RegisterRequest { AgentId = "a-9", Hostname = "host-9" }, TestCallContext());
+        Assert.False(string.IsNullOrEmpty(res.NodeId));
+        Assert.Equal(15_000, res.Config.HeartbeatIntervalMs);
+        Assert.Equal(1, registry.Count);
+    }
+
+    private sealed class FakeStreamReader<T> : IAsyncStreamReader<T>
+    {
+        private readonly IEnumerator<T> _enumerator;
+        public FakeStreamReader(params T[] items) => _enumerator = ((IEnumerable<T>)items).GetEnumerator();
+        public Task<bool> MoveNext(CancellationToken cancellationToken) => Task.FromResult(_enumerator.MoveNext());
+        public T Current => _enumerator.Current!;
+    }
+
+    /// <summary>保持打开的读桩：初始项取完后挂起等待，CompleteStream() 才视为流收尾。
+    /// 模拟真实 gRPC 请求流「连着但暂无数据」的形态，用于断言下行泵在流收尾前持续工作。</summary>
+    private sealed class HeldStreamReader<T> : IAsyncStreamReader<T>
+    {
+        private readonly System.Threading.Channels.Channel<T> _channel =
+            System.Threading.Channels.Channel.CreateUnbounded<T>();
+
+        public HeldStreamReader(params T[] initial)
+        {
+            foreach (var item in initial)
+                _channel.Writer.TryWrite(item);
+        }
+
+        public void CompleteStream() => _channel.Writer.TryComplete();
+
+        public async Task<bool> MoveNext(CancellationToken cancellationToken) =>
+            await _channel.Reader.WaitToReadAsync(cancellationToken);
+        public T Current => _channel.Reader.TryRead(out var item) ? item : throw new InvalidOperationException("no current item");
+    }
+
+    private sealed class FakeStreamWriter<T> : IServerStreamWriter<T>
+    {
+        public List<T> Written { get; } = [];
+        public WriteOptions? WriteOptions { get; set; }
+        public Task WriteAsync(T message) => WriteAsync(message, CancellationToken.None);
+        public Task WriteAsync(T message, CancellationToken cancellationToken)
+        {
+            Written.Add(message);
+            return Task.CompletedTask;
+        }
+    }
+
+    [Fact]
+    public async Task Heartbeat_KnownNode_AcksEachMessage()
+    {
+        var (service, registry, _) = Create();
+        var nodeId = RegisterNode(registry);
+        var acks = new FakeStreamWriter<HeartbeatAck>();
+        await service.Heartbeat(
+            new FakeStreamReader<HeartbeatMsg>(
+                new HeartbeatMsg { NodeId = nodeId },
+                new HeartbeatMsg { NodeId = nodeId }),
+            acks, TestCallContext());
+        Assert.Equal(2, acks.Written.Count);
+        Assert.True(acks.Written[0].Ts > 0);
+    }
+
+    [Fact]
+    public async Task Heartbeat_UnknownNode_ThrowsNotFound()
+    {
+        var (service, _, _) = Create();
+        var ex = await Assert.ThrowsAsync<RpcException>(() => service.Heartbeat(
+            new FakeStreamReader<HeartbeatMsg>(new HeartbeatMsg { NodeId = "ghost" }),
+            new FakeStreamWriter<HeartbeatAck>(), TestCallContext()));
+        Assert.Equal(StatusCode.NotFound, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task CommandStream_ValidNode_AttachesAndCompletesOnStreamEnd()
+    {
+        var (service, registry, hub) = Create();
+        var nodeId = RegisterNode(registry);
+        var ctx = CallContextWithNodeHeader(nodeId);
+
+        // 请求流带一条结果后收尾：读循环完成 → 通道优雅关闭 → 挂接协程退出。
+        var resultStream = new FakeStreamReader<DispatchResult>(
+            new DispatchResult { RequestId = "r-1", ExitCode = 0 });
+        await service.CommandStream(resultStream, new FakeGrpcRequestWriter(), ctx);
+
+        Assert.False(hub.IsConnected(nodeId)); // 流收尾即摘除通道
+    }
+
+    [Fact]
+    public async Task TermStream_PumpsBothDirections_ThenDetaches()
+    {
+        var (service, registry, _, streams) = CreateFull();
+        var nodeId = RegisterNode(registry);
+        var ctx = CallContextWithNodeHeader(nodeId, sessionId: "sess-it-1");
+
+        var toAgent = new FakeStreamWriter<TermData>();
+        var fromAgent = new HeldStreamReader<TermData>(
+            new TermData { NodeId = nodeId, SessionId = "sess-it-1", Data = Google.Protobuf.ByteString.CopyFromUtf8("out") });
+
+        var run = service.TermStream(fromAgent, toAgent, ctx);
+
+        // 会话经 AttachTerm 挂在 service 的 streams 上，取回做双向泵断言。
+        var session = streams.GetTerm(nodeId, "sess-it-1");
+        Assert.NotNull(session);
+
+        // 中控 → Agent：写 Outbound，responseStream 收到。
+        await session!.Outbound.Writer.WriteAsync(new TermData { NodeId = nodeId, SessionId = "sess-it-1", Data = Google.Protobuf.ByteString.CopyFromUtf8("in") });
+        await Task.Delay(100);
+        Assert.Contains(toAgent.Written, t => t.Data.ToStringUtf8() == "in");
+
+        // 请求流收尾 → 泵退出 → 会话摘除。
+        fromAgent.CompleteStream();
+        await run;
+        Assert.Null(streams.GetTerm(nodeId, "sess-it-1"));
+    }
+
+    [Fact]
+    public async Task TermStream_MissingSessionHeader_ThrowsInvalidArgument()
+    {
+        var (service, registry, _) = Create();
+        var nodeId = RegisterNode(registry);
+        var ex = await Assert.ThrowsAsync<RpcException>(() =>
+            service.TermStream(new FakeStreamReader<TermData>(), new FakeStreamWriter<TermData>(),
+                CallContextWithNodeHeader(nodeId, sessionId: null)));
+        Assert.Equal(StatusCode.InvalidArgument, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task TermStream_UnknownNode_ThrowsNotFound()
+    {
+        var (service, _, _) = Create();
+        var ex = await Assert.ThrowsAsync<RpcException>(() =>
+            service.TermStream(new FakeStreamReader<TermData>(), new FakeStreamWriter<TermData>(),
+                CallContextWithNodeHeader("ghost", sessionId: "s")));
+        Assert.Equal(StatusCode.NotFound, ex.StatusCode);
+    }
+
+    [Fact]
+    public async Task LogStream_BroadcastsChunks_ThenDetaches()
+    {
+        var (service, registry, _, streams) = CreateFull();
+        var nodeId = RegisterNode(registry);
+        var ctx = CallContextWithNodeHeader(nodeId);
+
+        var controls = new FakeStreamWriter<LogControl>();
+        var chunks = new HeldStreamReader<LogChunk>(
+            new LogChunk { NodeId = nodeId, Data = Google.Protobuf.ByteString.CopyFromUtf8("waf-line\n") });
+
+        var run = service.LogStream(chunks, controls, ctx);
+        await Task.Delay(100); // 让读循环把 chunk 广播出去
+
+        // Agent 日志块经会话广播到订阅者（WafEventIngestor 消费的正是这条路径）。
+        var session = streams.GetLog(nodeId);
+        Assert.NotNull(session);
+        using var sub = session!.Subscribe(out var reader);
+        session.Broadcast(new LogChunk { NodeId = nodeId, Data = Google.Protobuf.ByteString.CopyFromUtf8("late\n") });
+        var got = await reader.ReadAsync();
+        Assert.Equal("late\n", got.Data.ToStringUtf8());
+
+        // 中控 → Agent：订阅控制经 Outbound 泵到 responseStream。
+        await session.Outbound.Writer.WriteAsync(new LogControl { Action = "subscribe", Path = "/var/log/x" });
+        await Task.Delay(100);
+        Assert.Contains(controls.Written, c => c.Action == "subscribe");
+
+        chunks.CompleteStream();
+        await run; // 请求流收尾 → 泵退出 → 会话摘除
+        Assert.Null(streams.GetLog(nodeId));
+    }
+
+    [Fact]
+    public async Task LogStream_UnknownNode_ThrowsNotFound()
+    {
+        var (service, _, _) = Create();
+        var ex = await Assert.ThrowsAsync<RpcException>(() =>
+            service.LogStream(new FakeStreamReader<LogChunk>(), new FakeStreamWriter<LogControl>(),
+                CallContextWithNodeHeader("ghost")));
+        Assert.Equal(StatusCode.NotFound, ex.StatusCode);
+    }
+
     private static IAsyncStreamReader<DispatchResult> NullResultReader() =>
         new FakeGrpcResultReader();
 
@@ -196,11 +388,13 @@ public class AgentServiceDispatchTests
         public Task WriteAsync(DispatchRequest message, CancellationToken cancellationToken) => Task.CompletedTask;
     }
 
-    private static ServerCallContext CallContextWithNodeHeader(string? nodeId)
+    private static ServerCallContext CallContextWithNodeHeader(string? nodeId, string? sessionId = null)
     {
         var ctx = new TestServerCallContext();
         if (nodeId is not null)
             ctx.RequestHeadersInternal.Add(new Metadata.Entry("x-node-id", nodeId));
+        if (sessionId is not null)
+            ctx.RequestHeadersInternal.Add(new Metadata.Entry("x-session-id", sessionId));
         return ctx;
     }
 

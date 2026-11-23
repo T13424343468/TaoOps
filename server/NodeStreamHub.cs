@@ -30,8 +30,9 @@ public class NodeStreamHub
         public IDisposable Subscribe(out ChannelReader<LogChunk> reader)
         {
             var ch = Channel.CreateUnbounded<LogChunk>();
+            // 键单调递增且不复用（只增不回绕的 int），TryAdd 不会撞键，无需重试循环。
             var key = System.Threading.Interlocked.Increment(ref _subscriberSeq);
-            while (!_subscribers.TryAdd(key, ch)) key = System.Threading.Interlocked.Increment(ref _subscriberSeq);
+            _subscribers.TryAdd(key, ch);
             reader = ch.Reader;
             return new Unsubscriber(_subscribers, key);
         }

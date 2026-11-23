@@ -13,6 +13,8 @@ public sealed class WafRuleStore
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter() },
     };
 

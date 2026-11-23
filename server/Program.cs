@@ -32,25 +32,7 @@ builder.Services.AddHostedService<StreamIngestorHostedService>();
 // 默认 TLS，中控自签证书落数据目录，重启复用。
 var insecure = Environment.GetEnvironmentVariable("TAOOPS_INSECURE") == "1";
 var legacyUrls = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"));
-if (!insecure)
-{
-    var dataDir = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR") ?? "/var/lib/taoops/server";
-    var port = int.TryParse(Environment.GetEnvironmentVariable("TAOOPS_PORT"), out var p) && p > 0 ? p : 5241;
-    var cert = new CertManager(dataDir).GetOrCreate();
-    builder.WebHost.ConfigureKestrel(o =>
-        o.ListenAnyIP(port, l =>
-        {
-            l.Protocols = HttpProtocols.Http2 | HttpProtocols.Http1;
-            l.UseHttps(cert);
-        }));
-}
-else if (!legacyUrls)
-{
-    var port = int.TryParse(Environment.GetEnvironmentVariable("TAOOPS_PORT"), out var p) && p > 0 ? p : 5241;
-    builder.WebHost.ConfigureKestrel(o =>
-        o.ListenAnyIP(port, l => l.Protocols = HttpProtocols.Http2));
-}
-// insecure + legacyUrls：沿用 --urls 明文端点（M1 E2E 兼容路径）。
+Program.ConfigureTransport(builder, insecure, legacyUrls);
 
 var app = builder.Build();
 app.UseWebSockets();
@@ -88,8 +70,8 @@ app.MapPut("/api/waf/rules/{id}", (string id, WafRule rule, WafRuleStore store) 
 });
 app.MapDelete("/api/waf/rules/{id}", (string id, WafRuleStore store) =>
     store.Remove(id) ? Results.Ok() : Results.NotFound());
-app.MapPatch("/api/waf/rules/{id}/enabled", (string id, bool enabled, WafRuleStore store) =>
-    store.SetEnabled(id, enabled) ? Results.Ok() : Results.NotFound());
+app.MapPatch("/api/waf/rules/{id}/enabled", (string id, ToggleEnabled req, WafRuleStore store) =>
+    store.SetEnabled(id, req.Enabled) ? Results.Ok() : Results.NotFound());
 app.MapGet("/api/waf/settings", (WafRuleStore store) => Results.Json(store.Load().Settings));
 app.MapPut("/api/waf/settings", (WafSettings settings, WafRuleStore store) =>
 {
@@ -195,7 +177,39 @@ app.MapGet("/api/sec/events", (SecEventStore store, string? nodeId, long? from, 
 
 app.Run();
 
+// ---- 传输装配（可测化：Kestrel TLS/h2c 配置抽出，集成测试直测三分支）----
+public partial class Program
+{
+    /// <summary>
+    /// 传输模式装配（契约 §1）：默认 TLS（自签证书落数据目录，重启复用）；
+    /// TAOOPS_INSECURE=1 走明文 h2c（仅本地回环测试）；insecure + ASPNETCORE_URLS
+    /// 沿用 --urls 明文端点（M1 E2E 兼容路径，不另配 Kestrel）。
+    /// </summary>
+    internal static void ConfigureTransport(WebApplicationBuilder builder, bool insecure, bool legacyUrls)
+    {
+        if (!insecure)
+        {
+            var dataDir = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR") ?? "/var/lib/taoops/server";
+            var port = int.TryParse(Environment.GetEnvironmentVariable("TAOOPS_PORT"), out var p) && p > 0 ? p : 5241;
+            var cert = new CertManager(dataDir).GetOrCreate();
+            builder.WebHost.ConfigureKestrel(o =>
+                o.ListenAnyIP(port, l =>
+                {
+                    l.Protocols = HttpProtocols.Http2 | HttpProtocols.Http1;
+                    l.UseHttps(cert);
+                }));
+        }
+        else if (!legacyUrls)
+        {
+            var port = int.TryParse(Environment.GetEnvironmentVariable("TAOOPS_PORT"), out var p) && p > 0 ? p : 5241;
+            builder.WebHost.ConfigureKestrel(o =>
+                o.ListenAnyIP(port, l => l.Protocols = HttpProtocols.Http2));
+        }
+    }
+}
+
 // ---- 请求模型（M3 安全班）----
 public sealed record LoginRequest(string? Username, string? Password);
+public sealed record ToggleEnabled(bool Enabled);
 public sealed record BootstrapRequest(string? Username, string? Password);
 public sealed record CreateUserRequest(string? Username, string? Password, string? Role);

@@ -26,7 +26,9 @@ public static class WsBridge
         }
 
         using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
+        // 生命周期自管：不挂 RequestAborted（TestServer 在 101 握手完成即标记请求结束，
+        // 挂接会瞬间取消整条流）。断开检测靠 WS 帧与收发异常，语义不变。
+        using var linked = new CancellationTokenSource();
 
         var pumpOut = Task.Run(async () =>
         {
@@ -51,6 +53,8 @@ public static class WsBridge
             }
         }
         catch (OperationCanceledException) { }
+        catch (WebSocketException) { }
+        catch (IOException) { }
         finally
         {
             linked.Cancel();
@@ -74,7 +78,8 @@ public static class WsBridge
         }
 
         using var ws = await ctx.WebSockets.AcceptWebSocketAsync();
-        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted);
+        // 生命周期自管：不挂 RequestAborted（同 MapTerminal 口径，TestServer 101 即结束请求）。
+        using var linked = new CancellationTokenSource();
 
         await session.Outbound.Writer.WriteAsync(new LogControl
         {
@@ -84,15 +89,30 @@ public static class WsBridge
         }, linked.Token);
 
         using var sub = session.Subscribe(out var reader);
-        try
+        // 广播泵：LogChunk → WS。与 MapTerminal 同构，先起泵再进接收循环，
+        // 保证升级握手后服务端即触碰 WS（TestServer 依赖首次收发完成 101 握手）。
+        var pump = Task.Run(async () =>
         {
             await foreach (var chunk in reader.ReadAllAsync(linked.Token))
                 await WsSendAsync(ws, chunk.Data.ToArray(), linked.Token);
+        }, linked.Token);
+        try
+        {
+            var buffer = new byte[1024];
+            while (ws.State == WebSocketState.Open)
+            {
+                var result = await ws.ReceiveAsync(new ArraySegment<byte>(buffer), linked.Token);
+                if (result.MessageType == WebSocketMessageType.Close)
+                    break;
+            }
         }
         catch (OperationCanceledException) { }
+        catch (WebSocketException) { }
+        catch (IOException) { }
         finally
         {
             linked.Cancel();
+            try { await pump; } catch (OperationCanceledException) { }
             // 控制台断开即退订，避免 Agent 侧 tail 协程按 path 累积泄漏。
             session.Outbound.Writer.TryWrite(new LogControl { Action = "unsubscribe", Path = path });
         }
