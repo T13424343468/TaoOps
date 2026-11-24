@@ -9,6 +9,7 @@ import DashPage from "./pages/Dash";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
+import BackupPage from "./pages/Backup";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE, WEBSTATS_PAGE,
@@ -29,6 +30,7 @@ const router = createHashRouter([
     { path: "env", element: <ModulePage config={ENV_PAGE} /> },
     { path: "docker", element: <ModulePage config={DOCKER_PAGE} /> },
     { path: "webstats", element: <ModulePage config={WEBSTATS_PAGE} /> },
+    { path: "backup", element: <BackupPage /> },
     { path: "lb", element: <ModulePage config={LB_PAGE} /> },
     { path: "ssl", element: <ModulePage config={SSL_PAGE} /> },
     { path: "waf", element: <WafPage /> },
