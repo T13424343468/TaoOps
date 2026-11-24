@@ -175,3 +175,20 @@ message LogControl {
 - **落盘校验（验收口径）**：片段写入前先写临时文件并执行 `nginx -t`（若 nginx 可用；不可用时跳过并标注 skipped），失败不生效并回滚（删除临时文件、保留原片段）；变更（add/remove/drain/undrain）逐条留审计（口径同 fw 模块审计文件）。
 - **鉴权（LbPolicy，中控）**：`list`/`health` = ReadOnly 及以上；`add`/`remove`/`drain`/`undrain` = Operator 及以上；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/lb`，经下发桥审计留痕（口径同 §6）。
 - **审计**：全部变更 ops 经既有 `node.cmd` 审计哈希链留痕；Agent 侧审计文件记录每次片段变更前后摘要。
+
+## 9. 自定义告警推送（FR-A20）
+
+告警触发时向用户自填 webhook（钉钉/飞书/企业微信机器人或任意 HTTP 端点）POST JSON。纯中控侧能力，不涉节点下发，不新增 RPC；平台侧不建任何推送服务。
+
+- **渠道配置（dataDir/push/channels.json）**：`id`、`name`、`url`、`enabled`、`created_ms`。用户自填 URL，仅支持 http(s)。
+- **SSRF 防护（SsrfGuard）**：目标域名解析的全部 A/AAAA 记录均不得命中内网段——10/8、172.16/12、192.168/16、127/8、169.254/16、0.0.0.0、::1、fc00::/7、fe80::/10；IP 字面量直接判定。SSRF 白名单（dataDir/push/ssrf-whitelist.json，条目为主机名精确匹配或 CIDR 网段）由 Admin 面板配置、**默认为空**、变更进审计哈希链（Action=`push.whitelist`）。HTTP 客户端禁用自动重定向（AllowAutoRedirect=false）。
+- **推送触发（AlertCenter 接线）**：`Raise` 产生 critical 级别告警时异步触发（fire-and-forget，不阻塞告警入库），向全部启用渠道推送；JSON 模板含告警字段（id/source/level/node_id/detail/ts）。
+- **重试**：失败重试 3 次，退避间隔 1s/2s/4s；每次尝试独立留痕。
+- **推送日志（dataDir/push/log.jsonl）**：记录时间/渠道/URL/状态码/结果/尝试序号；保留策略同告警（默认 90 天）。
+- **端点（全部 Admin）**：
+  - `GET /api/push/channels`：渠道列表。
+  - `POST /api/push/channels`：新增/更新渠道（URL 过 SsrfGuard 校验，内网地址白名单外拒绝）；审计 Action=`push.channel`。
+  - `DELETE /api/push/channels/{id}`：删除渠道；审计。
+  - `GET|PUT /api/push/whitelist`：SSRF 白名单查询/变更（PUT 整体替换，逐条进审计）。
+  - `POST /api/push/test`：向指定渠道发送测试载荷，返回逐次尝试结果。
+  - `GET /api/push/log`：推送日志查询。
