@@ -142,6 +142,15 @@ public sealed class AuthService
         }
     }
 
+    /// <summary>记录一次校验失败（FR-A16：TOTP 二次校验失败走同一锁定通道）。</summary>
+    public void RecordFailure(string username, long nowMs)
+    {
+        lock (_lock)
+        {
+            CountFailure(username, nowMs);
+        }
+    }
+
     private void Audit(string username, string ip, string result, long nowMs) =>
         _audit.Append(new AuditEvent
         {

@@ -3,6 +3,7 @@ using System.Text.Json;
 using TaoOps.Server.Alerts;
 using TaoOps.Server.Audit;
 using TaoOps.Server.Auth;
+using Push = TaoOps.Server.Push;
 using TaoOps.Server.Relay;
 using TaoOps.Server.Sec;
 using TaoOps.Server.Services;
@@ -26,6 +27,9 @@ builder.Services.AddSingleton<UserStore>(_ => new UserStore(wafDataDir));
 builder.Services.AddSingleton<TokenStore>();
 builder.Services.AddSingleton<AuditStore>(_ => new AuditStore(wafDataDir));
 builder.Services.AddSingleton<AuthService>();
+// FR-A16 两步验证：TOTP 落盘与校验服务。
+builder.Services.AddSingleton<TotpStore>(_ => new TotpStore(wafDataDir));
+builder.Services.AddSingleton<TotpService>();
 builder.Services.AddSingleton<SecEventStore>(_ => new SecEventStore(wafDataDir));
 builder.Services.AddSingleton<SecEventIngestor>();
 builder.Services.AddSingleton<IntrusionDetector>();
@@ -270,7 +274,7 @@ app.MapGet("/api/relay/stats", (TaoOps.Server.Relay.RelayHub relay) => Results.J
 
 // ---- 自定义告警推送（FR-A20，契约 §9）：渠道/白名单/测试/日志，全部 Admin ----
 app.MapGet("/api/push/channels", (Push.PushChannelStore store) => Results.Json(store.List()));
-app.MapPost("/api/push/channels", async (Push.PushChannelReq req, HttpContext http,
+app.MapPost("/api/push/channels", async (PushChannelReq req, HttpContext http,
     Push.PushChannelStore store, Push.SsrfWhitelistStore whitelist, AuditStore audit) =>
 {
     var url = req.Url ?? "";
@@ -298,7 +302,7 @@ app.MapDelete("/api/push/channels/{id}", (string id, HttpContext http,
     return ok ? Results.Ok() : Results.NotFound();
 });
 app.MapGet("/api/push/whitelist", (Push.SsrfWhitelistStore store) => Results.Json(store.List()));
-app.MapPut("/api/push/whitelist", (Push.WhitelistReq req, HttpContext http,
+app.MapPut("/api/push/whitelist", (WhitelistReq req, HttpContext http,
     Push.SsrfWhitelistStore store, AuditStore audit) =>
 {
     var (oldEntries, newEntries) = store.Replace(req.Entries ?? []);
@@ -313,7 +317,7 @@ app.MapPut("/api/push/whitelist", (Push.WhitelistReq req, HttpContext http,
             Target = removed, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "removed" });
     return Results.Json(newEntries);
 });
-app.MapPost("/api/push/test", async (Push.TestPushReq req, Push.PushChannelStore channels,
+app.MapPost("/api/push/test", async (TestPushReq req, Push.PushChannelStore channels,
     Push.SsrfWhitelistStore whitelist, Push.PushDispatcher dispatcher) =>
 {
     var channel = channels.List().FirstOrDefault(c => c.Id == req.ChannelId);
