@@ -18,10 +18,11 @@ import TotpPage from "./pages/Totp";
 import PushPage from "./pages/Push";
 import LogCleanPage from "./pages/LogClean";
 import DbReplicaPage from "./pages/DbReplica";
+import SslPage from "./pages/Ssl";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
-  MONITOR_PAGE, NODES_PAGE, SITE_PAGE, SSL_PAGE, UPGRADE_PAGE,
+  MONITOR_PAGE, NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
 beforeAll(() => {
@@ -123,7 +124,6 @@ describe("22 页全覆盖冒烟", () => {
     ["FTP", <ModulePage config={FTP_PAGE} />, "重置密码"],
     ["计划任务", <ModulePage config={CRON_PAGE} />, "立即执行"],
     ["环境变量", <ModulePage config={ENV_PAGE} />, "重载环境"],
-    ["SSL", <ModulePage config={SSL_PAGE} />, "立即续期"],
     ["监控告警", <ModulePage config={MONITOR_PAGE} />, "静默 1h"],
     ["AI 运维", <ModulePage config={AI_PAGE} />, "生成建议"],
     ["升级", <ModulePage config={UPGRADE_PAGE} />, "执行升级"],
@@ -149,6 +149,16 @@ describe("22 页全覆盖冒烟", () => {
     expect(screen.getByText("复制状态")).toBeTruthy();
     expect(screen.getByText("主库：创建复制账号")).toBeTruthy();
     expect(screen.getByText("从库：配置复制")).toBeTruthy();
+  });
+
+  it("SSL 证书页：清单表与签发入口（真连 ssl 端点）", async () => {
+    renderAt(<SslPage />);
+    await waitFor(() => expect(screen.getByText("SSL 证书")).toBeTruthy());
+    expect(screen.getByText("证书清单")).toBeTruthy();
+    expect(screen.getByText("80 端口预检")).toBeTruthy();
+    expect(screen.getByText("签发 Let's Encrypt 证书")).toBeTruthy();
+    expect(screen.getByText("上传已有证书")).toBeTruthy();
+    expect(screen.getByText("自签证书（离线兜底）")).toBeTruthy();
   });
 
   it("告警推送页：渠道管理与白名单", async () => {

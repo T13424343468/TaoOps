@@ -16,10 +16,11 @@ import TotpPage from "./pages/Totp";
 import PushPage from "./pages/Push";
 import LogCleanPage from "./pages/LogClean";
 import DbReplicaPage from "./pages/DbReplica";
+import SslPage from "./pages/Ssl";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE, WEBSTATS_PAGE,
-  MONITOR_PAGE, NODES_PAGE, SITE_PAGE, SSL_PAGE, UPGRADE_PAGE,
+  MONITOR_PAGE, NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
 const router = createHashRouter([
@@ -39,7 +40,7 @@ const router = createHashRouter([
     { path: "backup", element: <BackupPage /> },
     { path: "migrate", element: <MigratePage /> },
     { path: "lb", element: <LbPage /> },
-    { path: "ssl", element: <ModulePage config={SSL_PAGE} /> },
+    { path: "ssl", element: <SslPage /> },
     { path: "waf", element: <WafPage /> },
     { path: "audit", element: <AuditPage /> },
     { path: "totp", element: <TotpPage /> },
