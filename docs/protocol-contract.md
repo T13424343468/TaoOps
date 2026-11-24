@@ -234,3 +234,19 @@ message LogControl {
 - **复制中断巡检（中控侧 ReplicationMonitor）**：每 60s 对全部命令通道在线节点下发 `db.manage op=replica_status`；IO 或 SQL 线程非 Yes → 告警 `replication` 级别 warn（边缘触发，恢复后复位）；`Seconds_Behind_Master` > 阈值（env `TAOOPS_REPLICA_LAG_THRESHOLD`，默认 300）→ 告警 warn（同边缘触发口径）。告警接 FR-A19 告警中心。
 - **鉴权（DbPolicy，中控）**：`replica_status` = ReadOnly 及以上；`master_grant`/`replica_config`/`replica_reset` = Admin（凭据与复制拓扑变更）；其余既有 db ops 口径不变。新增专用端点 `POST /api/nodes/{id}/db`，经下发桥审计留痕（口径同 §6）。
 - **审计**：master_grant/replica_config/replica_reset 经既有 `node.cmd` 审计哈希链留痕（不含 args）；Agent 侧无新增审计文件（mysql 操作经 CLI，凭据不落盘）。
+
+## 14. SSL 证书自动续期（FR-A21）
+
+新模块 `ssl.manage`（Agent 侧）：Let's Encrypt ACME（HTTP-01）签发与自动续期、已有证书上传管理、到期提醒（接 FR-A19，默认级别 warn）、自签证书路径保留（离线场景）。
+
+- **数据落点**：`<dataDir>/ssl/certs.json`（证书清单：domain、cert_path、key_path、issuer（letsencrypt|uploaded|selfsigned）、not_after、updated_ms）；私钥落盘权限 600（upload 与 selfsign 写入时显式设置；letsencrypt 由 certbot 落盘后模块校验并收紧到 600）。
+- **ops**：
+  - `list`：清单 JSON（domain/cert_path/issuer/not_after）。
+  - `precheck`（args: `domain`）：80 端口可达性预检（拨号 `domain:80`，超时 5s）；失败返回明确报错与指引文案（检查域名解析、防火墙/安全组放行 80、站点 80 端口公网可达）。
+  - `issue`（args: `domain`、`email`、`webroot`）：先 precheck，再经 certbot（`certonly --webroot -w <webroot> -d <domain> --non-interactive --agree-tos -m <email>`）签发；certbot 不存在时返回安装指引；签发后登记清单并校验私钥权限 600。
+  - `renew`（args: `domain`）：先 precheck，再 `certbot renew --cert-name <domain> --non-interactive`（到期前 30 天内才实际执行，未到期返回 skipped）；失败返回明确报错（面板侧产生续期失败告警）。
+  - `upload`（args: `domain`、`cert_pem`、`key_pem`）：已有证书上传管理——落盘 `<dataDir>/ssl/<domain>.crt` 与 `.key`（600），解析 not_after 登记清单。
+  - `selfsign`（args: `domain`、`days?`（默认 3650））：Go crypto/x509 自签证书（离线场景保留路径），私钥 600，登记清单。
+- **自动续期（中控侧 SslMonitor）**：每 24h 对全部在线节点下发 `ssl.manage op=list`；证书 not_after ≤30 天 → 先触发 `op=renew`，续期失败或仍到期 → 告警 `ssl` 级别 warn（边缘触发，续期成功或证书更新后复位）；>30 天不动作。
+- **鉴权（SslPolicy，中控）**：`list`/`precheck` = ReadOnly 及以上；`issue`/`renew`/`upload`/`selfsign` = Operator 及以上；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/ssl`，经下发桥审计留痕（口径同 §6）。
+- **审计**：issue/renew/upload/selfsign 经既有 `node.cmd` 审计哈希链留痕；私钥内容不进审计、不进日志。
