@@ -159,3 +159,19 @@ message LogControl {
   7. 迁移报告：`restored`（成功文件数）、`skipped`（快照保留的原文件说明）、`failed`（失败明细，含原因）；报告随 `data` 返回供面板展示。
 - **鉴权（MigratePolicy，中控）**：`precheck`/`pack` = Operator 及以上；`restore` = Admin（覆盖目标路径写操作）；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/migrate`，经下发桥审计留痕（口径同 §6）。
 - **传输编排（面板）**：precheck（源节点）→ pack（源节点）→ `backup.manage op=send`（源节点，轮询 `send_status`）→ `migrate.manage op=restore`（目标节点，confirm=true）。四步均走 §6 下发桥，逐条审计。
+
+## 9. 负载均衡 upstream 管理（FR-A18）
+
+新模块 `lb.manage`（Agent 侧）：管理 Nginx upstream 配置片段（增删后端、权重、健康检查、备用标记），生成独立片段落盘；站点引用由用户在 FR-A2 站点管理内自行配置，本期不做站点联动改造。
+
+- **配置落点**：`<confDir>/lb/<name>.conf`（confDir 为 Agent 站点配置目录）；片段仅含 `upstream <name> { ... }` 块，server 行形如 `server <host>:<port> weight=<w> [max_fails=3 fail_timeout=30s] [down] [backup];`。
+- **ops**：
+  - `list`（args: `name?`）：列出全部 upstream 组与后端明细（host、port、weight、backup、down、健康状态）。
+  - `add`（args: `name`、`host`、`port`、`weight?`、`backup?`、`health_mode`（tcp|http）、`health_path?`）：新增后端到指定组（组不存在则创建）；host 校验正则 `^[a-zA-Z0-9._-]+$`（IPv6 括号形式单独口径，本期拒绝并提示）；端口 1-65535；权重 1-100 整数；health_mode 必填二选一，http 时 health_path 必填且以 `/` 开头。
+  - `remove`（args: `name`、`host`、`port`）：从组中移除后端；组空则删除整个片段文件。
+  - `drain`（args: `name`、`host`、`port`）：标记 down（摘除，保留配置）。
+  - `undrain`（args: `name`、`host`、`port`）：取消 down 标记。
+  - `health`（args: `name?`）：对组内后端执行健康检查（TCP 拨号或 HTTP GET），连续 3 次失败判下线（down 状态落盘），检查间隔 30s 由面板/定时触发；返回各后端健康状态。
+- **落盘校验（验收口径）**：片段写入前先写临时文件并执行 `nginx -t`（若 nginx 可用；不可用时跳过并标注 skipped），失败不生效并回滚（删除临时文件、保留原片段）；变更（add/remove/drain/undrain）逐条留审计（口径同 fw 模块审计文件）。
+- **鉴权（LbPolicy，中控）**：`list`/`health` = ReadOnly 及以上；`add`/`remove`/`drain`/`undrain` = Operator 及以上；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/lb`，经下发桥审计留痕（口径同 §6）。
+- **审计**：全部变更 ops 经既有 `node.cmd` 审计哈希链留痕；Agent 侧审计文件记录每次片段变更前后摘要。
