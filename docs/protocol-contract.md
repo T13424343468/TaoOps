@@ -205,3 +205,18 @@ message LogControl {
 - **端点**：`/api/auth/totp/setup`、`/api/auth/totp/enable`、`/api/auth/totp/verify`、`/api/auth/totp/status`（GET，是否已启用）、`/api/auth/totp/recovery/regenerate`。全部走既有 Bearer/RBAC 中间件；setup/enable/regenerate 需密码复验（防会话劫持改配置）。
 - **前端**：登录页在 `totp_required` 后展示 6 位码输入；设置页（权限与审计内新页签）提供绑定（二维码/密钥展示 + 确认码）与恢复码重生成。
 - **审计**：setup/enable/verify 成败/regenerate 均落审计（Action=login 或 totp.*，Result=ok/invalid），密钥与恢复码明文不落审计。
+
+## 12. 日志清理（FR-A17）
+
+新模块 `logclean.manage`（Agent 侧）：按路径/大小/年龄规则定时清理日志文件，命中文件先压缩归档（默认保留 7 天）再删，白名单目录绝对保护。
+
+- **规则落点**：`<dataDir>/logclean/rules.json`：`id`、`path`（绝对路径，前缀匹配语义）、`max_size_mb`（0=不限）、`max_age_days`（0=不限，mtime 按天取整）、`enabled`、`created_ms`。二者至少一项大于 0 才算有效规则。
+- **内置白名单（绝对保护，不可配置移除）**：`/etc`、`/usr`、`/bin`、`<dataDir>`（运行时解析为绝对路径后比较）。清理目标命中白名单（规则路径或待删文件路径为白名单目录本身或其子路径）直接拒绝并告警（接 FR-A19 事件上报，级别 warn）。
+- **路径校验（验收口径）**：仅接受绝对路径；拒绝根路径 `/` 与过宽通配（路径含 `*` 时，通配段后必须仍有具体目录层级，`/*`、`/var/*` 形式拒绝）；路径匹配语义＝前缀匹配（规则 path 为待清理文件的前缀）；规范化后校验，禁止 `..` 与符号链接逃逸（清理时对每个命中文件取 EvalSymlinks 后再判白名单与前缀）。
+- **ops**：
+  - `list`：列出全部规则与最近一次清理留痕摘要。
+  - `add`（args: `path`、`max_size_mb?`、`max_age_days?`）：新增规则；路径校验 + 白名单拒绝；max_size_mb 与 max_age_days 至少一项 >0。
+  - `remove`（args: `id`）：删除规则。
+  - `run`（args: `id?`，缺省跑全部启用规则）：执行清理——按规则匹配文件（前缀匹配 + mtime 按天取整判龄 + 大小阈值），命中文件先 gzip 压缩归档到 `<dataDir>/logclean/archive/<yyyymmdd>/`（原文件删除），再逐条留痕（路径/大小/归档位置）到 `<dataDir>/logclean/cleaned.jsonl`；归档目录按天过期自动清理（默认保留 7 天）。
+- **鉴权（LogCleanPolicy，中控）**：`list` = ReadOnly 及以上；`add`/`remove`/`run` = Operator 及以上；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/logclean`，经下发桥审计留痕（口径同 §6）。
+- **审计**：add/remove/run 全部经既有 `node.cmd` 审计哈希链留痕；Agent 侧 cleaned.jsonl 记录每次清理明细（路径/大小/归档位置/时间）。

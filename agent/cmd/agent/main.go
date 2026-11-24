@@ -35,6 +35,7 @@ func main() {
 
 	// 模块运行时目录：默认 /var/lib/taoops/*，可用环境变量覆盖（离线部署友好）。
 	paths := modules.Paths{
+		DataDir:    envOr("TAOOPS_DATA_DIR", "/var/lib/taoops"),
 		ConfDir:    envOr("TAOOPS_CONF_DIR", "/var/lib/taoops/conf"),
 		BackupDir:  envOr("TAOOPS_BACKUP_DIR", "/var/lib/taoops/backup"),
 		SessionDir: envOr("TAOOPS_SESSION_DIR", "/var/lib/taoops/sessions"),
