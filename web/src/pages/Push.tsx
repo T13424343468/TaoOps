@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Form, Input, Select, Switch, Table, Typography, message } from "antd";
+import { Alert, Button, Card, Form, Input, Switch, Table, Typography, message } from "antd";
 import { api } from "../api/client";
 
 // FR-A20 自定义告警推送：渠道管理（Admin）、SSRF 白名单配置、测试推送、推送日志。

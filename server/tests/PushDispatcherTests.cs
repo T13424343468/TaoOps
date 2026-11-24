@@ -133,7 +133,7 @@ public class PushDispatcherTests : IDisposable
         while (log.Query().Count == 0 && DateTime.UtcNow < deadline)
             Thread.Sleep(50);
         Assert.Single(log.Query()); // 仅 critical 触发
-        Assert.Single(store.Query()); // 告警照常落账
+        Assert.Equal(2, store.Query().Count); // warn 与 critical 均照常落账
     }
 
     [Fact]
@@ -154,7 +154,7 @@ public class PushDispatcherTests : IDisposable
     [Fact]
     public void WhitelistStore_Replace_DedupesAndReturnsDiff()
     {
-        var (whitelist, _) = Stores();
+        var (_, whitelist, _) = Stores();
         var (oldEntries, newEntries) = whitelist.Replace(["10.0.0.0/8", "10.0.0.0/8", "host.example"]);
         Assert.Empty(oldEntries);
         Assert.Equal(2, newEntries.Count);

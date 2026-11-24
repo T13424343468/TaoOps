@@ -15,10 +15,11 @@ import BackupPage from "./pages/Backup";
 import MigratePage from "./pages/Migrate";
 import LbPage from "./pages/Lb";
 import TotpPage from "./pages/Totp";
+import PushPage from "./pages/Push";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
-  MONITOR_PAGE, NODES_PAGE, PUSH_PAGE, SITE_PAGE, SSL_PAGE, UPGRADE_PAGE,
+  MONITOR_PAGE, NODES_PAGE, SITE_PAGE, SSL_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
 beforeAll(() => {
