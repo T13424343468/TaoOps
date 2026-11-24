@@ -21,6 +21,7 @@ import (
 	"taoops/agent/internal/modules/registry"
 	"taoops/agent/internal/modules/secguard"
 	"taoops/agent/internal/modules/site"
+	"taoops/agent/internal/modules/ssl"
 	"taoops/agent/internal/modules/sysinfo"
 	"taoops/agent/internal/modules/tamperguard"
 	"taoops/agent/internal/modules/term"
@@ -58,6 +59,7 @@ func RegisterAll(r *registry.Registry, p Paths) (*backup.Manager, error) {
 		{"fw", func() error { return fw.Register(r, fw.NewManager(p.AuditPath)) }},
 		{"lb", func() error { return lb.Register(r, lb.NewManager(p.ConfDir, filepath.Join(p.LogDir, "lb.audit"))) }},
 		{"logclean", func() error { return logclean.Register(r, logclean.NewManager(p.DataDir)) }},
+		{"ssl", func() error { return ssl.Register(r, ssl.NewManager(p.DataDir)) }},
 		{"ftp", func() error { return ftp.Register(r, ftp.NewManager(filepath.Join(p.ConfDir, "ftp.json"))) }},
 		{"backup", func() error { return backup.Register(r, backupMgr) }},
 		{"migrate", func() error { return migrate.Register(r, migrate.NewManager(backupMgr)) }},
