@@ -15,6 +15,7 @@ import (
 	"taoops/agent/internal/modules/files"
 	"taoops/agent/internal/modules/ftp"
 	"taoops/agent/internal/modules/fw"
+	"taoops/agent/internal/modules/migrate"
 	"taoops/agent/internal/modules/registry"
 	"taoops/agent/internal/modules/secguard"
 	"taoops/agent/internal/modules/site"
@@ -54,6 +55,7 @@ func RegisterAll(r *registry.Registry, p Paths) (*backup.Manager, error) {
 		{"fw", func() error { return fw.Register(r, fw.NewManager(p.AuditPath)) }},
 		{"ftp", func() error { return ftp.Register(r, ftp.NewManager(filepath.Join(p.ConfDir, "ftp.json"))) }},
 		{"backup", func() error { return backup.Register(r, backupMgr) }},
+		{"migrate", func() error { return migrate.Register(r, migrate.NewManager(backupMgr)) }},
 		{"secguard", func() error {
 			return secguard.Register(r, secguard.NewManager(secguard.FromEnv(filepath.Join(p.ConfDir, "secguard.json"))))
 		}},

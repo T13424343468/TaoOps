@@ -378,3 +378,54 @@ func (m *Manager) latestManifest(dest, name string) *Manifest {
 	}
 	return &man
 }
+
+// Dir returns the backup root directory (FR-A14 migrate path scoping).
+func (m *Manager) Dir() string { return m.backupDir }
+
+// PackFull creates a full (non-incremental) archive of source under the
+// backup dir and writes its manifest sidecar; used by the FR-A14 migrate
+// module (contract §8: pack reuses FR-A9 full-backup logic).
+func (m *Manager) PackFull(source, name string) (string, *Manifest, error) {
+	dest := filepath.Join(m.backupDir, name)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return "", nil, fmt.Errorf("backup: mkdir dest: %w", err)
+	}
+	stamp := m.now().UTC().Format("20060102-150405")
+	archivePath := filepath.Join(dest, fmt.Sprintf("%s-%s.tar.gz", name, stamp))
+	man, err := m.createArchive(archivePath, name, source, nil)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := m.writeManifest(archivePath, man); err != nil {
+		return "", nil, err
+	}
+	return archivePath, man, nil
+}
+
+// SnapshotFor archives the current state of dir (when non-empty) as a
+// rollback point under backupDir/name; returns the snapshot path, or ""
+// when dir is missing or empty (FR-A14 restore pre-snapshot).
+func (m *Manager) SnapshotFor(dir, name string) (string, error) {
+	if entries := m.currentEntries(dir); len(entries) > 0 {
+		path := filepath.Join(m.backupDir, name,
+			fmt.Sprintf("rollback-%d.tar.gz", m.now().UnixNano()))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return "", fmt.Errorf("backup: mkdir snapshot dest: %w", err)
+		}
+		man, err := m.createArchive(path, name, dir, nil)
+		if err != nil {
+			return "", err
+		}
+		if err := m.writeManifest(path, man); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	return "", nil
+}
+
+// ExtractTo extracts archivePath into target with the same path-traversal
+// guards as restore (FR-A14 target-side unpack).
+func (m *Manager) ExtractTo(archivePath, target string) error {
+	return m.extractArchive(archivePath, target)
+}
