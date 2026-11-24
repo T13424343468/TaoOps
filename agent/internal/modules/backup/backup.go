@@ -85,8 +85,16 @@ func (m *Manager) handle(args map[string]any) (registry.Result, error) {
 		return m.opRelayAssemble(args)
 	case "relay_abort":
 		return m.opRelayAbort(args)
+	case "policy_list":
+		return m.opPolicyList()
+	case "policy_add":
+		return m.opPolicyAdd(args)
+	case "policy_remove":
+		return m.opPolicyRemove(args)
+	case "policy_run":
+		return m.opPolicyRun(args)
 	}
-	return registry.Result{ExitCode: 2}, fmt.Errorf("backup: unknown op %q (want create|list|restore|rollback|send|send_status|relay_begin|relay_put|relay_status|relay_assemble|relay_abort)", op)
+	return registry.Result{ExitCode: 2}, fmt.Errorf("backup: unknown op %q (want create|list|restore|rollback|send|send_status|relay_begin|relay_put|relay_status|relay_assemble|relay_abort|policy_list|policy_add|policy_remove|policy_run)", op)
 }
 
 func str(args map[string]any, key string) string {
