@@ -13,10 +13,11 @@ import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
 import BackupPage from "./pages/Backup";
 import MigratePage from "./pages/Migrate";
+import LbPage from "./pages/Lb";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
-  LB_PAGE, MONITOR_PAGE, NODES_PAGE, PUSH_PAGE, SITE_PAGE, SSL_PAGE, UPGRADE_PAGE,
+  MONITOR_PAGE, NODES_PAGE, PUSH_PAGE, SITE_PAGE, SSL_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
 beforeAll(() => {
@@ -92,6 +93,14 @@ describe("19 页全覆盖冒烟", () => {
     expect(screen.getByText("4. 目标端还原（confirm）")).toBeTruthy();
   });
 
+  it("负载均衡页：上游组列表与添加后端（真连 lb 端点）", async () => {
+    renderAt(<LbPage />);
+    await waitFor(() => expect(screen.getByText("负载均衡")).toBeTruthy());
+    expect(screen.getByText("上游组与后端")).toBeTruthy();
+    expect(screen.getByText("添加后端")).toBeTruthy();
+    expect(screen.getByText("健康检查")).toBeTruthy();
+  });
+
   const modulePages: [string, React.ReactNode, string][] = [
     ["多机中控", <ModulePage config={NODES_PAGE} />, "批量下发（跨机）"],
     ["网站", <ModulePage config={SITE_PAGE} />, "重载配置"],
@@ -100,7 +109,6 @@ describe("19 页全覆盖冒烟", () => {
     ["FTP", <ModulePage config={FTP_PAGE} />, "重置密码"],
     ["计划任务", <ModulePage config={CRON_PAGE} />, "立即执行"],
     ["环境变量", <ModulePage config={ENV_PAGE} />, "重载环境"],
-    ["负载均衡", <ModulePage config={LB_PAGE} />, "摘除节点"],
     ["SSL", <ModulePage config={SSL_PAGE} />, "立即续期"],
     ["监控告警", <ModulePage config={MONITOR_PAGE} />, "静默 1h"],
     ["AI 运维", <ModulePage config={AI_PAGE} />, "生成建议"],
