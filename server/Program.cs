@@ -398,6 +398,24 @@ app.MapPost("/api/nodes/{id}/migrate", async (string id, MigrateOpRequest req, H
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// FR-A18 负载均衡专用端点：按操作分级鉴权（LbPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/lb", async (string id, LbOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !LbPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for lb op" }, statusCode: 403);
+    }
+    var args = LbOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "lb.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 app.MapPost("/api/nodes/{id}/cmd", async (string id, NodeCmdRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
     try
@@ -460,6 +478,10 @@ public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, s
 public sealed record MigrateOpRequest(string? Op, string? SourcePath, string? TargetPath, string? Name,
     string? File, string? Mapping, string? SourceVersion, bool? Confirm, bool? Force, int TimeoutMs);
 
+// ---- FR-A18 负载均衡下发请求 ----
+public sealed record LbOpRequest(string? Op, string? Name, string? Host, int? Port, int? Weight, bool? Backup,
+    string? HealthMode, string? HealthPath, int TimeoutMs);
+
 // ---- FR-A16 两步验证请求 ----
 public sealed record TotpVerifyRequest(string? Username, string? Code);
 public sealed record TotpSetupRequest(string? Username, string? Password);
@@ -484,6 +506,23 @@ internal static class MigrateOpArgs
         if (!string.IsNullOrEmpty(req.SourceVersion)) args.Add($"source_version={req.SourceVersion}");
         if (req.Confirm is bool c) args.Add($"confirm={c.ToString().ToLowerInvariant()}");
         if (req.Force is bool f) args.Add($"force={f.ToString().ToLowerInvariant()}");
+        return args;
+    }
+}
+
+internal static class LbOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(LbOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
+        if (!string.IsNullOrEmpty(req.Host)) args.Add($"host={req.Host}");
+        if (req.Port is int port) args.Add($"port={port}");
+        if (req.Weight is int weight) args.Add($"weight={weight}");
+        if (req.Backup is bool backup) args.Add($"backup={backup.ToString().ToLowerInvariant()}");
+        if (!string.IsNullOrEmpty(req.HealthMode)) args.Add($"health_mode={req.HealthMode}");
+        if (!string.IsNullOrEmpty(req.HealthPath)) args.Add($"health_path={req.HealthPath}");
         return args;
     }
 }
