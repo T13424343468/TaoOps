@@ -220,3 +220,17 @@ message LogControl {
   - `run`（args: `id?`，缺省跑全部启用规则）：执行清理——按规则匹配文件（前缀匹配 + mtime 按天取整判龄 + 大小阈值），命中文件先 gzip 压缩归档到 `<dataDir>/logclean/archive/<yyyymmdd>/`（原文件删除），再逐条留痕（路径/大小/归档位置）到 `<dataDir>/logclean/cleaned.jsonl`；归档目录按天过期自动清理（默认保留 7 天）。
 - **鉴权（LogCleanPolicy，中控）**：`list` = ReadOnly 及以上；`add`/`remove`/`run` = Operator 及以上；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/logclean`，经下发桥审计留痕（口径同 §6）。
 - **审计**：add/remove/run 全部经既有 `node.cmd` 审计哈希链留痕；Agent 侧 cleaned.jsonl 记录每次清理明细（路径/大小/归档位置/时间）。
+
+## 13. MySQL 主从复制（FR-A15）
+
+`db.manage` 扩展四个复制 ops（仅 MySQL；PostgreSQL 不在本期范围）。Agent 侧经 mysql CLI 执行，凭据不落盘、不回显。
+
+- **ops**：
+  - `master_grant`（args: `replica_host`）：主库侧创建复制账号——用户名 `repl_<8位随机>`、密码 24 位强随机（crypto/rand，大小写+数字+符号），`CREATE USER ... IDENTIFIED BY ...` + `GRANT REPLICATION SLAVE ON *.* TO ...`；密码仅在本次 Output 展示一次，后续查询不回显；重复调用生成新账号（旧账号不自动清理，由用户自行 DROP）。
+  - `replica_config`（args: `master_host`、`master_port?`（默认 3306）、`master_user`、`master_password`、`master_log_file?`、`master_log_pos?`）：从库侧执行 `STOP SLAVE` → `CHANGE MASTER TO MASTER_HOST=..., MASTER_PORT=..., MASTER_USER=..., MASTER_PASSWORD=... [, MASTER_LOG_FILE=..., MASTER_LOG_POS=...]` → `START SLAVE`；变更前对 `/etc/my.cnf`（或 `/etc/mysql/my.cnf`，存在哪个备份哪个）做时间戳备份（口径同 FR-A2：备份目录 + `.<yyyymmddhhmmss>.bak` 后缀）；Output 中所有凭据字段统一脱敏为 `***`。
+  - `replica_status`：`SHOW SLAVE STATUS\G` 解析 `Slave_IO_Running`、`Slave_SQL_Running`、`Seconds_Behind_Master`、`Master_Host`、`Last_Error`；Output 为 JSON（含上述字段；未配置复制时 `configured=false`）。
+  - `replica_reset`：`STOP SLAVE` → `RESET SLAVE ALL`（断链重置，清除复制配置）。
+- **凭据脱敏（验收口径）**：中控下发桥审计事件不记录 args（结构上不落凭据）；Agent 侧 replica_config 的 Output 与任何错误信息统一脱敏（`Redact` 助手：值中含密码字段的 key=value 对替换为 `***`）；master_grant 密码仅创建时 Output 展示一次。
+- **复制中断巡检（中控侧 ReplicationMonitor）**：每 60s 对全部命令通道在线节点下发 `db.manage op=replica_status`；IO 或 SQL 线程非 Yes → 告警 `replication` 级别 warn（边缘触发，恢复后复位）；`Seconds_Behind_Master` > 阈值（env `TAOOPS_REPLICA_LAG_THRESHOLD`，默认 300）→ 告警 warn（同边缘触发口径）。告警接 FR-A19 告警中心。
+- **鉴权（DbPolicy，中控）**：`replica_status` = ReadOnly 及以上；`master_grant`/`replica_config`/`replica_reset` = Admin（凭据与复制拓扑变更）；其余既有 db ops 口径不变。新增专用端点 `POST /api/nodes/{id}/db`，经下发桥审计留痕（口径同 §6）。
+- **审计**：master_grant/replica_config/replica_reset 经既有 `node.cmd` 审计哈希链留痕（不含 args）；Agent 侧无新增审计文件（mysql 操作经 CLI，凭据不落盘）。
