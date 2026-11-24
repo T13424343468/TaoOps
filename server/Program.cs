@@ -445,6 +445,24 @@ app.MapPost("/api/nodes/{id}/migrate", async (string id, MigrateOpRequest req, H
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// FR-A24 应用一键部署专用端点：按操作分级鉴权（AppDeployPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/apps", async (string id, AppDeployRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !AppDeployPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for app deploy op" }, statusCode: 403);
+    }
+    var args = AppDeployArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "app.deploy", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 // FR-A18 负载均衡专用端点：按操作分级鉴权（LbPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/lb", async (string id, LbOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {

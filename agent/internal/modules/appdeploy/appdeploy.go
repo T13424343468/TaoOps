@@ -444,14 +444,14 @@ func Handler(m *Manager) registry.Handler {
 			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"templates": Templates()}}, nil
 		case "deploy":
 			tid, _ := args["template"].(string)
-			env := toStringMap(args["env"])
+			env := envOverridesFromArgs(args)
 			st, err := m.Deploy(app, tid, env)
 			if err != nil {
 				return registry.Result{ExitCode: 1, Data: map[string]any{"state": st}}, err
 			}
 			return registry.Result{ExitCode: 0, Output: "deployed", Data: map[string]any{"state": st}}, nil
 		case "upgrade":
-			env := toStringMap(args["env"])
+			env := envOverridesFromArgs(args)
 			st, err := m.Upgrade(app, env)
 			if err != nil {
 				return registry.Result{ExitCode: 1, Data: map[string]any{"state": st}}, err
@@ -487,6 +487,24 @@ func toStringMap(v any) map[string]string {
 				out[k] = fmt.Sprint(s)
 			}
 		}
+	}
+	return out
+}
+
+// envOverridesFromArgs collects env overrides from the flat key=value
+// arg convention used by the HTTP bridge: "env.KEY=value" pairs.
+func envOverridesFromArgs(args map[string]any) map[string]string {
+	out := toStringMap(args["env"])
+	prefix := "env."
+	for k, v := range args {
+		if strings.HasPrefix(k, prefix) {
+			if s, ok := v.(string); ok {
+				out[strings.TrimPrefix(k, prefix)] = s
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
