@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, Popconfirm, Select, Space, Table, Tag, Typography, message } from "antd";
+import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, Popconfirm, Select, Space, Tag, Typography, message } from "antd";
 import { api } from "../api/client";
 
 // FR-A15 MySQL 主从复制（真连 POST /api/nodes/{id}/db，契约 §13）。
