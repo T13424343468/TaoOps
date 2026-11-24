@@ -247,6 +247,44 @@ func Handler(m *Manager) registry.Handler {
 				return registry.Result{ExitCode: 1}, err
 			}
 			return registry.Result{ExitCode: 0, Output: out}, nil
+		// FR-A27 remote-access grant ops; MySQL only.
+		case "db_grant_list":
+			out, err := m.GrantList()
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: grantJSON(out)}, nil
+		case "db_grant_add":
+			database, _ := args["database"].(string)
+			user, _ := args["user"].(string)
+			host, _ := args["host"].(string)
+			privs, _ := args["privileges"].([]any)
+			ps := make([]string, 0, len(privs))
+			for _, p := range privs {
+				if s, ok := p.(string); ok {
+					ps = append(ps, s)
+				}
+			}
+			out, err := m.GrantAdd(database, user, host, ps)
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: out}, nil
+		case "db_grant_revoke":
+			database, _ := args["database"].(string)
+			user, _ := args["user"].(string)
+			host, _ := args["host"].(string)
+			confirm, _ := args["confirm"].(string)
+			if confirm == "" {
+				if b, ok := args["confirm"].(bool); ok && b {
+					confirm = "true"
+				}
+			}
+			out, err := m.GrantRevoke(database, user, host, confirm == "true")
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: out}, nil
 		}
 		return registry.Result{ExitCode: 2}, fmt.Errorf("db: unknown op %q", op)
 	}
