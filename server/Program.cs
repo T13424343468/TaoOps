@@ -69,6 +69,13 @@ builder.Services.AddSingleton<NodeOfflineMonitor>(sp => new NodeOfflineMonitor(
     sp.GetRequiredService<AlertCenter>(),
     sp.GetRequiredService<ILogger<NodeOfflineMonitor>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<NodeOfflineMonitor>());
+// FR-A26 备份策略调度：60s 轮询在线节点策略清单，到期即触发执行，失败边缘触发 warn 告警。
+builder.Services.AddSingleton<BackupScheduleMonitor>(sp => new BackupScheduleMonitor(
+    sp.GetRequiredService<NodeCommandBridge>(),
+    () => sp.GetRequiredService<NodeCommandBridge>().ListNodes().Select(n => (n.NodeId, n.CommandConnected)),
+    sp.GetRequiredService<AlertCenter>(),
+    sp.GetRequiredService<ILogger<BackupScheduleMonitor>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<BackupScheduleMonitor>());
 // 节点间备份中转（FR-A13）：源端分片流转发，过账不落盘，流量统计面板可查。
 builder.Services.AddSingleton<TaoOps.Server.Relay.RelayHub>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
@@ -488,6 +495,23 @@ app.MapPost("/api/nodes/{id}/ssl", async (string id, SslOpRequest req, HttpConte
     try
     {
         var outcome = await bridge.DispatchAsync(id, "ssl.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+app.MapPost("/api/nodes/{id}/backup/policy", async (string id, BackupPolicyRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !BackupPolicyOps.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for backup policy op" }, statusCode: 403);
+    }
+    var args = BackupPolicyArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "backup.manage", args, req.TimeoutMs,
             http.Items["taoops.user"]?.ToString() ?? "", roleStr,
             http.Connection.RemoteIpAddress?.ToString() ?? "");
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
