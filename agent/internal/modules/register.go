@@ -21,6 +21,7 @@ import (
 	"taoops/agent/internal/modules/site"
 	"taoops/agent/internal/modules/sysinfo"
 	"taoops/agent/internal/modules/term"
+	"taoops/agent/internal/modules/webstats"
 )
 
 // Paths groups the runtime directories the modules need.
@@ -56,6 +57,9 @@ func RegisterAll(r *registry.Registry, p Paths) error {
 		}},
 		{"tamperguard", func() error {
 			return tamperguard.Register(r, tamperguard.NewGuard(tamperguard.ParsePaths(os.Getenv("TAOOPS_TAMPER_PATHS")), os.Getenv("TAOOPS_TAMPER_BPF_PIN"), "", 0))
+		}},
+		{"webstats", func() error {
+			return webstats.Register(r, webstats.NewManager(filepath.Join(p.LogDir, "webstats")))
 		}},
 	}
 	for _, s := range steps {
