@@ -38,6 +38,7 @@ beforeAll(() => {
     if (u.includes("/api/auth/me")) return json({ user: "admin", role: "Admin" });
     if (u.includes("/cmd")) return json({ exit_code: 0, output: JSON.stringify({ entries: [{ name: "nginx.conf", is_dir: false, size: 12, mode: "-rw-r--r--" }] }) });
     if (u.includes("/files/edit")) return json({ exit_code: 0, output: "" });
+    if (u.includes("/backup/policy")) return json({ exit_code: 0, output: "[]" });
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -96,6 +97,8 @@ describe("22 页全覆盖冒烟", () => {
     await waitFor(() => expect(screen.getByText("备份档案")).toBeTruthy());
     expect(screen.getByText("发送到其他节点")).toBeTruthy();
     expect(screen.getByText("中转流量统计")).toBeTruthy();
+    expect(screen.getByText("定时备份策略")).toBeTruthy();
+    expect(screen.getByText("添加策略")).toBeTruthy();
   });
 
   it("迁移页：四步迁移流程", async () => {
