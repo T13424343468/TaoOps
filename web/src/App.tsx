@@ -16,6 +16,7 @@ const NAV = [
   { key: "g-site", label: "站点与应用", children: [
     { key: "/site", label: "网站" },
     { key: "/db", label: "数据库" },
+    { key: "/db-replica", label: "主从复制" },
     { key: "/files", label: "文件" },
     { key: "/ftp", label: "FTP" },
     { key: "/cron", label: "计划任务" },

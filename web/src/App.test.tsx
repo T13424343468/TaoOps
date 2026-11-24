@@ -17,6 +17,7 @@ import LbPage from "./pages/Lb";
 import TotpPage from "./pages/Totp";
 import PushPage from "./pages/Push";
 import LogCleanPage from "./pages/LogClean";
+import DbReplicaPage from "./pages/DbReplica";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
@@ -50,7 +51,7 @@ const renderAt = (el: React.ReactNode, path = "/") =>
     </ConfigProvider>,
   );
 
-describe("21 页全覆盖冒烟", () => {
+describe("22 页全覆盖冒烟", () => {
   it("登录页：登录与初始化两个页签", () => {
     renderAt(<LoginPage onLogin={() => {}} />);
     expect(screen.getByText("TaoOps 控制台")).toBeTruthy();
@@ -140,6 +141,14 @@ describe("21 页全覆盖冒烟", () => {
     expect(screen.getByText("清理规则")).toBeTruthy();
     expect(screen.getByText("添加规则")).toBeTruthy();
     expect(screen.getByText("立即清理")).toBeTruthy();
+  });
+
+  it("主从复制页：状态卡与配置入口（真连 db 端点）", async () => {
+    renderAt(<DbReplicaPage />);
+    await waitFor(() => expect(screen.getByText("主从复制")).toBeTruthy());
+    expect(screen.getByText("复制状态")).toBeTruthy();
+    expect(screen.getByText("主库：创建复制账号")).toBeTruthy();
+    expect(screen.getByText("从库：配置复制")).toBeTruthy();
   });
 
   it("告警推送页：渠道管理与白名单", async () => {

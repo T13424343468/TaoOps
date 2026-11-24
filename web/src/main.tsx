@@ -15,6 +15,7 @@ import LbPage from "./pages/Lb";
 import TotpPage from "./pages/Totp";
 import PushPage from "./pages/Push";
 import LogCleanPage from "./pages/LogClean";
+import DbReplicaPage from "./pages/DbReplica";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE, WEBSTATS_PAGE,
@@ -46,6 +47,7 @@ const router = createHashRouter([
     { path: "upgrade", element: <ModulePage config={UPGRADE_PAGE} /> },
     { path: "push", element: <PushPage /> },
     { path: "logclean", element: <LogCleanPage /> },
+    { path: "db-replica", element: <DbReplicaPage /> },
   ]},
 ]);
 
