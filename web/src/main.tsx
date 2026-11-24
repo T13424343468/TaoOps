@@ -20,6 +20,7 @@ import SslPage from "./pages/Ssl";
 import FilesPage from "./pages/Files";
 import MetricsPage from "./pages/Metrics";
 import AppDeployPage from "./pages/AppDeploy";
+import K8sPage from "./pages/K8s";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FTP_PAGE, WEBSTATS_PAGE,
@@ -40,6 +41,7 @@ const router = createHashRouter([
     { path: "env", element: <ModulePage config={ENV_PAGE} /> },
     { path: "docker", element: <ModulePage config={DOCKER_PAGE} /> },
     { path: "apps", element: <AppDeployPage /> },
+    { path: "k8s", element: <K8sPage /> },
     { path: "webstats", element: <ModulePage config={WEBSTATS_PAGE} /> },
     { path: "backup", element: <BackupPage /> },
     { path: "migrate", element: <MigratePage /> },

@@ -11,6 +11,7 @@ import DashPage from "./pages/Dash";
 import FilesPage from "./pages/Files";
 import MetricsPage from "./pages/Metrics";
 import AppDeployPage from "./pages/AppDeploy";
+import K8sPage from "./pages/K8s";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
@@ -44,6 +45,8 @@ beforeAll(() => {
     if (u.includes("/db/grants")) return json({ exit_code: 0, output: "[]" });
     if (u.includes("/metrics")) return json([{ ts: Date.now(), cpu_used_pct: 12.5, mem_total_kb: 16000000, mem_used_kb: 8000000, disk_read_bps: 0, disk_write_bps: 0, net_rx_total: 0, net_tx_total: 0 }]);
     if (u.includes("/apps")) return json({ exit_code: 0, output: JSON.stringify({ templates: [{ id: "nginx", name: "Nginx 网页服务器", arch: "amd64+arm64", kind: "single", services: [{ name: "nginx", image: "nginx:stable" }] }], apps: [{ app: "my-site", template_id: "nginx", images: ["nginx:stable"], deployed_at: "2026-11-24T15:00:00Z", health: "healthy" }] }) });
+    if (u.includes("/api/k8s/clusters")) return json([{ name: "prod", server: "https://10.0.0.1:6443", version: "v1.30.0", added_ms: Date.now() }]);
+    if (u.includes("/api/k8s/")) return json([]);
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -163,6 +166,17 @@ describe("23 页全覆盖冒烟", () => {
     expect(screen.getByText("已部署应用")).toBeTruthy();
     await waitFor(() => expect(screen.getByText("my-site")).toBeTruthy());
     expect(screen.getByText("healthy")).toBeTruthy();
+  });
+
+  it("K8s 集群页：集群列表与视图页签（真连 k8s 端点）", async () => {
+    renderAt(<K8sPage />);
+    await waitFor(() => expect(screen.getByText("K8s 集群")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("prod")).toBeTruthy());
+    expect(screen.getAllByText("接入集群").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("一键部署").length).toBeGreaterThan(0);
+    await waitFor(() => expect(screen.getByText(/集群视图：prod/)).toBeTruthy());
+    expect(screen.getAllByText("节点").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("工作负载").length).toBeGreaterThan(0);
   });
 
   it("文件页：目录表与编辑抽屉（真连 files 端点）", async () => {

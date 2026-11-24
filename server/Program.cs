@@ -594,6 +594,7 @@ app.MapPost("/api/k8s/{cluster}/ops", (string cluster, K8sRequest req, HttpConte
             "rollout_status" => svc.RolloutStatus(cluster, req.Namespace ?? "default", req.Deployment ?? ""),
             "deploy" => svc.Deploy(cluster, req.Template ?? "", req.Name ?? "",
                 req.Namespace ?? "default", null, 1),
+            "templates" => K8sTemplateCatalog.Templates.Select(t => new { t.Id, t.Name, t.Arch, t.Kind }),
             "remove" => Wrap(() =>
             {
                 var (d, s) = svc.Remove(cluster, req.Name ?? "", req.Namespace ?? "default", req.Confirm);
