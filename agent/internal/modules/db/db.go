@@ -215,6 +215,38 @@ func Handler(m *Manager) registry.Handler {
 				return registry.Result{ExitCode: 1}, err
 			}
 			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"backups": files}}, nil
+		// FR-A15 replication ops (contract §13); MySQL only.
+		case "master_grant":
+			replicaHost, _ := args["replica_host"].(string)
+			out, err := m.MasterGrant(replicaHost)
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: out}, nil
+		case "replica_config":
+			masterHost, _ := args["master_host"].(string)
+			masterPort, _ := args["master_port"].(string)
+			masterUser, _ := args["master_user"].(string)
+			masterPassword, _ := args["master_password"].(string)
+			logFile, _ := args["master_log_file"].(string)
+			logPos := toInt(args["master_log_pos"])
+			out, err := m.ReplicaConfig(masterHost, masterPort, masterUser, masterPassword, logFile, logPos)
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: out}, nil
+		case "replica_status":
+			out, err := m.ReplicaStatus()
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: out}, nil
+		case "replica_reset":
+			out, err := m.ReplicaReset()
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: out}, nil
 		}
 		return registry.Result{ExitCode: 2}, fmt.Errorf("db: unknown op %q", op)
 	}
