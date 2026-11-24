@@ -141,3 +141,21 @@ message LogControl {
 - **告警接线（FR-A19）**：磁盘预检拒收、分片重传耗尽、整包校验失败 → warn 告警（source=backup）。
 - **还原口径**：跨节点还原 = 持有备份的节点对目标节点执行 `send`，目标端 `restore` 本地执行；还原操作需 `confirm=true`，还原前自动快照（同 FR-A9）。
 - **审计**：relay_begin/put/assemble/abort 经既有 `node.cmd` 审计哈希链留痕（口径同 §6）。
+
+## 8. 一键迁移（FR-A14）
+
+站点从源节点一键迁移到目标节点：源端打包（复用 FR-A9 全量备份逻辑）→ 经 §7 中转底座传输 → 目标端按迁移清单还原。新模块 `migrate.manage`（Agent 侧），传输完全复用 `backup.manage op=send/send_status` 与 §7 中转通道，不新增 RPC。
+
+- **源端 ops（migrate.manage）**：
+  - `precheck`（args: `source_path`、`target_path`、`force?`）：生成预检报告——源/目标路径均须绝对路径且 `Clean` 后不含 `..`；统计文件数与总大小；采集源端 Agent 版本。任一路径校验失败直接拒绝（ExitCode 2）；环境版本差异进报告（源端版本 vs 目标端版本在 restore 时比对），`force=true` 时报告标注 `forced` 且放行（留审计，走 §6 哈希链）。
+  - `pack`（args: `source_path`、`target_path`、`name`）：全量打包源路径至 BackupDir（复用 backup 模块 createArchive），并写迁移清单 `<archive>.migrate.json`：`archive`（档案路径）、`source_path`、`target_path`、`source_version`（Agent 版本）、`created`、`files`（文件数）、`total_size`。清单随后作为 restore 参数经中控下发（JSON args，走普通命令通道）。
+- **目标端 op（migrate.manage）**：`restore`（args: `file`、`mapping`（JSON：`source_path`/`target_path`）、`source_version`、`confirm`、`force?`）：
+  1. `file` 必须位于 BackupDir 内（绝对路径校验，同 §7 send 口径）。
+  2. `target_path` 绝对路径、`Clean` 后不含 `..`，且逐级校验已存在路径组件非符号链接（防符号链接逃逸）。
+  3. 版本比对：`source_version` ≠ 本端 Agent 版本 → 默认拒绝（ExitCode 2），`force=true` 跳过且报告标注 `forced`。
+  4. `confirm=true` 必须（同 FR-A9 口径），缺失返回提示不执行。
+  5. 还原前对 `target_path` 现状自动快照（同 FR-A9 回滚快照口径；目录不存在则跳过快照）。
+  6. 解压档案至 `target_path`（防路径穿越同 FR-A9）。
+  7. 迁移报告：`restored`（成功文件数）、`skipped`（快照保留的原文件说明）、`failed`（失败明细，含原因）；报告随 `data` 返回供面板展示。
+- **鉴权（MigratePolicy，中控）**：`precheck`/`pack` = Operator 及以上；`restore` = Admin（覆盖目标路径写操作）；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/migrate`，经下发桥审计留痕（口径同 §6）。
+- **传输编排（面板）**：precheck（源节点）→ pack（源节点）→ `backup.manage op=send`（源节点，轮询 `send_status`）→ `migrate.manage op=restore`（目标节点，confirm=true）。四步均走 §6 下发桥，逐条审计。
