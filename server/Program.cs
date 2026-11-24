@@ -49,6 +49,13 @@ builder.Services.AddSingleton<AlertCenter>(sp =>
         sp.GetRequiredService<Push.PushLogStore>());
     return new AlertCenter(sp.GetRequiredService<AlertStore>(), push);
 });
+// FR-A15 复制中断巡检：60s 轮询在线节点 replica_status，中断/超阈值接告警中心。
+builder.Services.AddSingleton<ReplicationMonitor>(sp => new ReplicationMonitor(
+    sp.GetRequiredService<NodeCommandBridge>(),
+    () => sp.GetRequiredService<NodeCommandBridge>().ListNodes().Select(n => (n.NodeId, n.CommandConnected)),
+    sp.GetRequiredService<AlertCenter>(),
+    sp.GetRequiredService<ILogger<ReplicationMonitor>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<ReplicationMonitor>());
 // 节点间备份中转（FR-A13）：源端分片流转发，过账不落盘，流量统计面板可查。
 builder.Services.AddSingleton<TaoOps.Server.Relay.RelayHub>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
@@ -432,6 +439,24 @@ app.MapPost("/api/nodes/{id}/logclean", async (string id, LogCleanOpRequest req,
     try
     {
         var outcome = await bridge.DispatchAsync(id, "logclean.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// FR-A15 MySQL 主从复制专用端点：按操作分级鉴权（DbPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/db", async (string id, DbReplicaRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DbPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for db replica op" }, statusCode: 403);
+    }
+    var args = DbReplicaArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "db.manage", args, req.TimeoutMs,
             http.Items["taoops.user"]?.ToString() ?? "", roleStr,
             http.Connection.RemoteIpAddress?.ToString() ?? "");
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
