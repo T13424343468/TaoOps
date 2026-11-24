@@ -16,7 +16,7 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
     {
         "sysinfo.overview", "site.manage", "db.manage", "files.manage", "term.manage",
         "cron.manage", "env.manage", "fw.manage", "backup.manage", "ftp.manage",
-        "sec.manage", "docker.manage", "webstats.manage",
+        "sec.manage", "docker.manage", "webstats.manage", "migrate.manage",
     };
     private static readonly char[] ForbiddenChars = { ';', '|', '&', '`', '$' };
 

@@ -254,6 +254,24 @@ app.MapPost("/api/nodes/{id}/webstats", async (string id, WebStatsOpRequest req,
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// FR-A14 一键迁移专用端点：按操作分级鉴权（MigratePolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/migrate", async (string id, MigrateOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !MigratePolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for migrate op" }, statusCode: 403);
+    }
+    var args = MigrateOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "migrate.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 app.MapPost("/api/nodes/{id}/cmd", async (string id, NodeCmdRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
     try
@@ -311,6 +329,28 @@ public sealed record DockerOpRequest(string? Op, string? Name, string? Ref, stri
 
 // ---- FR-A12 网站统计下发请求 ----
 public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, string? From, string? To, int TimeoutMs);
+
+// ---- FR-A14 一键迁移下发请求 ----
+public sealed record MigrateOpRequest(string? Op, string? SourcePath, string? TargetPath, string? Name,
+    string? File, string? Mapping, string? SourceVersion, bool? Confirm, bool? Force, int TimeoutMs);
+
+internal static class MigrateOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(MigrateOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.SourcePath)) args.Add($"source_path={req.SourcePath}");
+        if (!string.IsNullOrEmpty(req.TargetPath)) args.Add($"target_path={req.TargetPath}");
+        if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
+        if (!string.IsNullOrEmpty(req.File)) args.Add($"file={req.File}");
+        if (!string.IsNullOrEmpty(req.Mapping)) args.Add($"mapping={req.Mapping}");
+        if (!string.IsNullOrEmpty(req.SourceVersion)) args.Add($"source_version={req.SourceVersion}");
+        if (req.Confirm is bool c) args.Add($"confirm={c.ToString().ToLowerInvariant()}");
+        if (req.Force is bool f) args.Add($"force={f.ToString().ToLowerInvariant()}");
+        return args;
+    }
+}
 
 internal static class WebStatsOpArgs
 {
