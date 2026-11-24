@@ -420,6 +420,24 @@ app.MapPost("/api/nodes/{id}/lb", async (string id, LbOpRequest req, HttpContext
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// FR-A17 日志清理专用端点：按操作分级鉴权（LogCleanPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/logclean", async (string id, LogCleanOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !LogCleanPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for logclean op" }, statusCode: 403);
+    }
+    var args = LogCleanOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "logclean.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 app.MapPost("/api/nodes/{id}/cmd", async (string id, NodeCmdRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
     try
