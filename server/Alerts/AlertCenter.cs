@@ -5,7 +5,7 @@ namespace TaoOps.Server.Alerts;
 /// <summary>
 /// 告警中心（FR-A19）：统一告警入口。落盘在 AlertStore（dataDir/alerts/），
 /// 本类负责来源接线：磁盘水位（心跳边缘触发 + 迟滞复位）与入侵检测告警转发。
-/// critical 触发推送（FR-A20）随其落地后补验（验收拆两段，PRD v1.2 §FR-A19）。
+/// critical 触发推送已接 FR-A20（PushDispatcher 异步触发）。
 /// </summary>
 public sealed class AlertCenter
 {
@@ -16,12 +16,22 @@ public sealed class AlertCenter
 
     private readonly AlertStore _store;
     private readonly ConcurrentDictionary<string, bool> _diskAlerted = new(StringComparer.Ordinal);
+    /// <summary>critical 触发推送（FR-A20）：接线后异步触发，可为空（测试直构）。</summary>
+    private readonly Push.PushDispatcher? _push;
 
-    public AlertCenter(AlertStore store) => _store = store;
+    public AlertCenter(AlertStore store, Push.PushDispatcher? push = null)
+    {
+        _store = store;
+        _push = push;
+    }
 
-    /// <summary>统一告警入口：来源方直接落账。</summary>
-    public Alert Raise(string source, string level, string nodeId, string detail, long? tsMs = null) =>
-        _store.Append(source, level, nodeId, detail, tsMs);
+    /// <summary>统一告警入口：来源方直接落账；critical 触发推送（FR-A20 接线）。</summary>
+    public Alert Raise(string source, string level, string nodeId, string detail, long? tsMs = null)
+    {
+        var alert = _store.Append(source, level, nodeId, detail, tsMs);
+        _push?.OnAlert(alert);
+        return alert;
+    }
 
     /// <summary>入侵检测告警转发：级别按 severity 映射（high→critical / medium→warn / low→info）。</summary>
     public Alert IngestIntrusion(Sec.SecAlert secAlert) =>

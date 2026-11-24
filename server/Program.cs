@@ -32,7 +32,19 @@ builder.Services.AddSingleton<IntrusionDetector>();
 
 // 统一告警中心（FR-A19）：落盘 dataDir/alerts/，入侵检测与心跳磁盘水位接线。
 builder.Services.AddSingleton<AlertStore>(_ => new AlertStore(wafDataDir));
-builder.Services.AddSingleton<AlertCenter>();
+// 自定义告警推送（FR-A20）：渠道/白名单/日志落盘 dataDir/push/，critical 触发接线告警中心。
+builder.Services.AddSingleton<Push.PushChannelStore>(_ => new Push.PushChannelStore(wafDataDir));
+builder.Services.AddSingleton<Push.SsrfWhitelistStore>(_ => new Push.SsrfWhitelistStore(wafDataDir));
+builder.Services.AddSingleton<Push.PushLogStore>(_ => new Push.PushLogStore(wafDataDir));
+builder.Services.AddSingleton<Push.PushDispatcher>();
+builder.Services.AddSingleton<AlertCenter>(sp =>
+{
+    var push = new Push.PushDispatcher(
+        sp.GetRequiredService<Push.PushChannelStore>(),
+        sp.GetRequiredService<Push.SsrfWhitelistStore>(),
+        sp.GetRequiredService<Push.PushLogStore>());
+    return new AlertCenter(sp.GetRequiredService<AlertStore>(), push);
+});
 // 节点间备份中转（FR-A13）：源端分片流转发，过账不落盘，流量统计面板可查。
 builder.Services.AddSingleton<TaoOps.Server.Relay.RelayHub>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
@@ -110,16 +122,68 @@ app.MapGet("/api/waf/config/preview", (WafRuleStore store) =>
 });
 
 // ---- 认证与账号管理（M3 安全班，PRD FR-C2 面板侧）----
-app.MapPost("/api/auth/login", (LoginRequest req, HttpContext http, AuthService auth) =>
+app.MapPost("/api/auth/login", (LoginRequest req, HttpContext http, AuthService auth, TotpService totp) =>
 {
     var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
-    var result = auth.Login(req.Username ?? "", req.Password ?? "", ip,
-        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    var result = auth.Login(req.Username ?? "", req.Password ?? "", ip, nowMs);
     if (result.Locked) return Results.Json(new { error = "account locked" }, statusCode: 423);
     if (!result.Ok) return Results.Json(new { error = "invalid credentials" }, statusCode: 401);
+    // FR-A16：密码正确且已启用 TOTP → 不发 token，要求二次校验。
+    if (totp.IsEnabled(req.Username ?? ""))
+        return Results.Json(new { totp_required = true });
     return Results.Json(new { token = result.Session!.Token, role = result.Session.Role.ToString(),
         username = result.Session.Username, expires_at_ms = result.Session.ExpiresAtMs });
 });
+// FR-A16：登录二次校验（6 位 TOTP 或恢复码），成功发会话。
+app.MapPost("/api/auth/totp/verify", (TotpVerifyRequest req, HttpContext http, TotpService totp) =>
+{
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    var result = totp.VerifyLogin(req.Username ?? "", req.Code, ip, nowMs);
+    if (result.Locked) return Results.Json(new { error = "account locked" }, statusCode: 423);
+    if (!result.Ok || result.Session is null)
+        return Results.Json(new { error = "invalid totp code" }, statusCode: 401);
+    return Results.Json(new { token = result.Session.Token, role = result.Session.Role.ToString(),
+        username = result.Session.Username, expires_at_ms = result.Session.ExpiresAtMs });
+});
+// FR-A16：绑定准备（需登录 + 密码复验），返回密钥与 otpauth URI（前端渲染二维码）。
+app.MapPost("/api/auth/totp/setup", (TotpSetupRequest req, HttpContext http, TotpService totp) =>
+{
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    try
+    {
+        var (secret, uri) = totp.Setup(req.Username ?? "", req.Password ?? "", ip, nowMs);
+        return Results.Json(new { secret, otpauth_uri = uri });
+    }
+    catch (UnauthorizedAccessException) { return Results.Json(new { error = "password re-verification failed" }, statusCode: 401); }
+});
+// FR-A16：确认绑定（需密码复验），返回 10 枚恢复码明文（仅此一次）。
+app.MapPost("/api/auth/totp/enable", (TotpEnableRequest req, HttpContext http, TotpService totp) =>
+{
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    try
+    {
+        var (codes, err) = totp.Enable(req.Username ?? "", req.Code ?? "", ip, nowMs);
+        if (err != "") return Results.BadRequest(new { error = err });
+        return Results.Json(new { recovery_codes = codes });
+    }
+    catch (UnauthorizedAccessException) { return Results.Json(new { error = "password re-verification failed" }, statusCode: 401); }
+});
+// FR-A16：重新生成恢复码（需登录 + 密码复验），旧码全部失效。
+app.MapPost("/api/auth/totp/recovery/regenerate", (TotpEnableRequest req, HttpContext http, TotpService totp) =>
+{
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    var (codes, err) = totp.RegenerateRecovery(req.Username ?? "", req.Password ?? "", ip, nowMs);
+    if (err != "") return Results.BadRequest(new { error = err });
+    return Results.Json(new { recovery_codes = codes });
+});
+// FR-A16：查询是否已启用（登录页据此决定是否展示二次校验）。
+app.MapGet("/api/auth/totp/status", (string? username, TotpService totp) =>
+    Results.Json(new { enabled = totp.IsEnabled(username ?? "") }));
 app.MapPost("/api/auth/logout", (HttpContext ctx, TokenStore tokens) =>
 {
     var raw = ctx.Request.Headers.Authorization.ToString();
@@ -203,6 +267,68 @@ app.MapPost("/api/alerts/read-all", (AlertStore store) => Results.Json(new { mar
 
 // ---- 节点间备份中转流量统计（FR-A13，契约 §7）----
 app.MapGet("/api/relay/stats", (TaoOps.Server.Relay.RelayHub relay) => Results.Json(relay.Stats()));
+
+// ---- 自定义告警推送（FR-A20，契约 §9）：渠道/白名单/测试/日志，全部 Admin ----
+app.MapGet("/api/push/channels", (Push.PushChannelStore store) => Results.Json(store.List()));
+app.MapPost("/api/push/channels", async (Push.PushChannelReq req, HttpContext http,
+    Push.PushChannelStore store, Push.SsrfWhitelistStore whitelist, AuditStore audit) =>
+{
+    var url = req.Url ?? "";
+    var ssrfError = await Push.SsrfGuard.ValidateTargetAsync(url, whitelist.List());
+    if (ssrfError is not null)
+    {
+        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+            Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.channel",
+            Target = url, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = $"rejected: {ssrfError}" });
+        return Results.Json(new { error = ssrfError }, statusCode: 400);
+    }
+    var channel = store.Upsert(new Push.PushChannel { Id = req.Id ?? "", Name = req.Name ?? "", Url = url, Enabled = req.Enabled ?? true });
+    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+        Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.channel",
+        Target = url, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+    return Results.Json(channel);
+});
+app.MapDelete("/api/push/channels/{id}", (string id, HttpContext http,
+    Push.PushChannelStore store, AuditStore audit) =>
+{
+    var ok = store.Delete(id);
+    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+        Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.channel",
+        Target = id, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = ok ? "ok" : "not_found" });
+    return ok ? Results.Ok() : Results.NotFound();
+});
+app.MapGet("/api/push/whitelist", (Push.SsrfWhitelistStore store) => Results.Json(store.List()));
+app.MapPut("/api/push/whitelist", (Push.WhitelistReq req, HttpContext http,
+    Push.SsrfWhitelistStore store, AuditStore audit) =>
+{
+    var (oldEntries, newEntries) = store.Replace(req.Entries ?? []);
+    // 变更进审计哈希链：逐条记录新增与移除。
+    foreach (var added in newEntries.Where(e => !oldEntries.Contains(e, StringComparer.OrdinalIgnoreCase)))
+        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+            Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.whitelist",
+            Target = added, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "added" });
+    foreach (var removed in oldEntries.Where(e => !newEntries.Contains(e, StringComparer.OrdinalIgnoreCase)))
+        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+            Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.whitelist",
+            Target = removed, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "removed" });
+    return Results.Json(newEntries);
+});
+app.MapPost("/api/push/test", async (Push.TestPushReq req, Push.PushChannelStore channels,
+    Push.SsrfWhitelistStore whitelist, Push.PushDispatcher dispatcher) =>
+{
+    var channel = channels.List().FirstOrDefault(c => c.Id == req.ChannelId);
+    if (channel is null) return Results.Json(new { error = "channel not found" }, statusCode: 404);
+    var ssrfError = await Push.SsrfGuard.ValidateTargetAsync(channel.Url, whitelist.List());
+    if (ssrfError is not null) return Results.Json(new { error = ssrfError }, statusCode: 400);
+    var results = await dispatcher.SendAsync(new Alert
+    {
+        Id = "test", Source = "push-test", Level = AlertLevels.Critical,
+        NodeId = "-", Detail = "手动测试推送", Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+    });
+    return Results.Json(results);
+});
+app.MapGet("/api/push/log", (Push.PushLogStore store, string? channelId, long? from, long? to) =>
+    Results.Json(store.Query(channelId, from, to)));
 
 // ---- 企业层 RBAC 权限清单（A13）：静态矩阵可查 ----
 app.MapGet("/api/auth/permissions", (HttpContext ctx) =>
@@ -333,6 +459,16 @@ public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, s
 // ---- FR-A14 一键迁移下发请求 ----
 public sealed record MigrateOpRequest(string? Op, string? SourcePath, string? TargetPath, string? Name,
     string? File, string? Mapping, string? SourceVersion, bool? Confirm, bool? Force, int TimeoutMs);
+
+// ---- FR-A16 两步验证请求 ----
+public sealed record TotpVerifyRequest(string? Username, string? Code);
+public sealed record TotpSetupRequest(string? Username, string? Password);
+public sealed record TotpEnableRequest(string? Username, string? Code, string? Password);
+
+// ---- FR-A20 告警推送请求 ----
+public sealed record PushChannelReq(string? Id, string? Name, string? Url, bool? Enabled);
+public sealed record WhitelistReq(IReadOnlyList<string>? Entries);
+public sealed record TestPushReq(string? ChannelId);
 
 internal static class MigrateOpArgs
 {
