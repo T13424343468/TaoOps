@@ -250,3 +250,16 @@ message LogControl {
 - **自动续期（中控侧 SslMonitor）**：每 24h 对全部在线节点下发 `ssl.manage op=list`；证书 not_after ≤30 天 → 先触发 `op=renew`，续期失败或仍到期 → 告警 `ssl` 级别 warn（边缘触发，续期成功或证书更新后复位）；>30 天不动作。
 - **鉴权（SslPolicy，中控）**：`list`/`precheck` = ReadOnly 及以上；`issue`/`renew`/`upload`/`selfsign` = Operator 及以上；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/ssl`，经下发桥审计留痕（口径同 §6）。
 - **审计**：issue/renew/upload/selfsign 经既有 `node.cmd` 审计哈希链留痕；私钥内容不进审计、不进日志。
+
+## 15. K8s 集成（FR-A28）
+
+中控侧新模块 `k8s`：对接用户已有集群（不装集群，对齐 1Panel 边界），三层全做——只读接入+告警、基础操作、一键部署延伸到集群。中控经官方 KubernetesClient 直连 API Server，Agent 不参与。
+
+- **集群接入**：面板添加集群（kubeconfig 粘贴或上传），中控保存 `<dataDir>/k8s/clusters/<name>.kubeconfig`（落盘 600）；连接测试（version 探测）通过才算接入成功。集群元数据（名称、接入时间、server 地址、版本）登记 `<dataDir>/k8s/clusters.json`；删除集群需 `confirm=true`，同时删除 kubeconfig 文件。
+- **安全红线**：kubeconfig 只存中控、落盘 600；审计脱敏（不落凭据内容、不落 kubeconfig 原文）；绝不下发节点 Agent。
+- **只读层**：节点列表、工作负载（Deployment/StatefulSet/DaemonSet）、Pod 状态、事件、Pod 日志（读操作但进审计留痕——安全评审保留意见③）。
+- **告警（K8sMonitor）**：每 60s 对全部集群巡检 Pod 健康；CrashLoopBackOff / ImagePullBackOff / 重启次数激增（≥5 次/10min）产生 `k8s` 级别 warn 告警（接 FR-A19，边缘触发，恢复复位）；巡检失败静默（监控自身降级不产生告警噪音，口径同 FR-A23）。
+- **操作层**：Deployment 扩缩容（replicas）、重启（rollout restart，patch restartAt 注解）、滚动更新进度（status 观察）；变更操作限 Admin，审计留痕。
+- **部署层**：FR-A24 模板渲染为 K8s 清单（Deployment+Service，带 PVC 预留字段），提交到指定 namespace；与单机模板共用模板库；镜像引用走 FR-A11 镜像正则。
+- **RBAC（K8sPolicy）**：集群管理（增删）=Admin；查看（nodes/workloads/pods/events/logs）=ReadOnly 及以上；资源操作（scale/restart/deploy/remove）=Admin；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/k8s/{cluster}/...` 与 `GET /api/k8s/{cluster}/...`，经统一鉴权与审计。
+- **边界**：不装集群、不做多租户、不做 Helm 生态（清单直渲染）；K8s 版本兼容按客户端库支持矩阵标注。

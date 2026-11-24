@@ -7,6 +7,7 @@ using Push = TaoOps.Server.Push;
 using TaoOps.Server.Relay;
 using TaoOps.Server.Sec;
 using TaoOps.Server.Services;
+using TaoOps.Server.Services.K8s;
 using TaoOps.Server.Waf;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -85,6 +86,16 @@ builder.Services.AddSingleton<MetricsSampler>(sp => new MetricsSampler(
     sp.GetRequiredService<MetricsStore>(),
     sp.GetRequiredService<ILogger<MetricsSampler>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsSampler>());
+// FR-A28 K8s 集成：kubeconfig 只存中控（落盘 600），中控直连集群，Agent 不参与。
+builder.Services.AddSingleton<KubeClusterStore>(_ => new KubeClusterStore(wafDataDir));
+builder.Services.AddSingleton<IK8sClientFactory, K8sClientFactory>();
+builder.Services.AddSingleton<K8sClusterService>();
+builder.Services.AddSingleton<K8sMonitor>(sp => new K8sMonitor(
+    sp.GetRequiredService<KubeClusterStore>(),
+    sp.GetRequiredService<IK8sClientFactory>(),
+    sp.GetRequiredService<AlertCenter>(),
+    sp.GetRequiredService<ILogger<K8sMonitor>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<K8sMonitor>());
 // 节点间备份中转（FR-A13）：源端分片流转发，过账不落盘，流量统计面板可查。
 builder.Services.AddSingleton<TaoOps.Server.Relay.RelayHub>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
@@ -463,6 +474,145 @@ app.MapPost("/api/nodes/{id}/apps", async (string id, AppDeployRequest req, Http
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+
+// ---- FR-A28 K8s 集成（契约 §15）：中控直连集群，Agent 不参与。 ----
+// 集群管理（增删）=Admin；查看=ReadOnly；资源操作=Admin（K8sPolicy）。
+// 审计脱敏：kubeconfig 原文与凭据内容不进审计、不进日志（安全红线）。
+app.MapGet("/api/k8s/clusters", (KubeClusterStore store) => Results.Json(store.List()));
+app.MapPost("/api/k8s/clusters", (K8sRequest req, HttpContext http,
+    KubeClusterStore store, K8sClusterService svc, AuditStore audit) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("add", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    var name = req.Name ?? "";
+    var kubeconfig = req.Kubeconfig ?? "";
+    if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(kubeconfig))
+        return Results.Json(new { error = "name and kubeconfig required" }, statusCode: 400);
+    string version;
+    try { version = svc.TestVersion(kubeconfig); }
+    catch (Exception ex)
+    {
+        // 连接测试失败：报错不含 kubeconfig 内容。
+        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+            Role = roleStr, Action = "k8s.cluster", Target = name,
+            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "connect_failed" });
+        return Results.Json(new { error = $"连接测试失败: {ex.Message}" }, statusCode: 400);
+    }
+    var meta = store.Save(name, kubeconfig, version);
+    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+        Role = roleStr, Action = "k8s.cluster", Target = name,
+        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = $"ok version={version}" });
+    return Results.Json(meta);
+});
+app.MapDelete("/api/k8s/clusters/{name}", (string name, HttpContext http,
+    KubeClusterStore store, AuditStore audit, bool confirm) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("remove_cluster", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    var ok = store.Remove(name, confirm);
+    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+        Role = roleStr, Action = "k8s.cluster", Target = name,
+        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = ok ? "removed" : (confirm ? "not_found" : "confirm_required") });
+    return ok ? Results.Ok() : Results.Json(new { error = confirm ? "cluster not found" : "confirm=true required" },
+        statusCode: confirm ? 404 : 400);
+});
+app.MapGet("/api/k8s/{cluster}/nodes", (string cluster, HttpContext http, K8sClusterService svc) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("nodes", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    try { return Results.Json(svc.ListNodes(cluster)); }
+    catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
+    catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
+});
+app.MapGet("/api/k8s/{cluster}/workloads", (string cluster, HttpContext http, K8sClusterService svc, string? ns) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("workloads", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    try { return Results.Json(svc.ListWorkloads(cluster, ns ?? "")); }
+    catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
+    catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
+});
+app.MapGet("/api/k8s/{cluster}/pods", (string cluster, HttpContext http, K8sClusterService svc, string? ns) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("pods", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    try { return Results.Json(svc.ListPods(cluster, ns ?? "")); }
+    catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
+    catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
+});
+app.MapGet("/api/k8s/{cluster}/events", (string cluster, HttpContext http, K8sClusterService svc, string? ns) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("events", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    try { return Results.Json(svc.ListEvents(cluster, ns ?? "")); }
+    catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
+    catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
+});
+// Pod 日志：读操作但进审计留痕（安全评审保留意见③）。
+app.MapGet("/api/k8s/{cluster}/logs", (string cluster, HttpContext http, K8sClusterService svc,
+    AuditStore audit, string ns, string pod, string? container) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("logs", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    try
+    {
+        var log = svc.GetPodLog(cluster, ns, pod, container);
+        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+            Role = roleStr, Action = "k8s.logs", Target = $"{cluster}/{ns}/{pod}",
+            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+        return Results.Content(log);
+    }
+    catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
+    catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
+});
+// 资源操作：scale/restart/rollout_status/deploy/remove，变更限 Admin，审计留痕。
+app.MapPost("/api/k8s/{cluster}/ops", (string cluster, K8sRequest req, HttpContext http,
+    K8sClusterService svc, AuditStore audit) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows(req.Op ?? "", role))
+    {
+        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+            Role = roleStr, Action = "k8s.op", Target = $"{cluster}/{req.Op}",
+            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "denied" });
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    }
+    try
+    {
+        object result = (req.Op ?? "") switch
+        {
+            "scale" => svc.Scale(cluster, req.Namespace ?? "default", req.Deployment ?? "",
+                int.TryParse(req.Replicas, out var r) ? r : -1),
+            "restart" => Wrap(() => { svc.Restart(cluster, req.Namespace ?? "default", req.Deployment ?? ""); return "restarted"; }),
+            "rollout_status" => svc.RolloutStatus(cluster, req.Namespace ?? "default", req.Deployment ?? ""),
+            "deploy" => svc.Deploy(cluster, req.Template ?? "", req.Name ?? "",
+                req.Namespace ?? "default", null, 1),
+            "remove" => Wrap(() =>
+            {
+                var (d, s) = svc.Remove(cluster, req.Name ?? "", req.Namespace ?? "default", req.Confirm);
+                return $"removed deployments={d} services={s}";
+            }),
+            _ => throw new ArgumentException($"未知操作: {req.Op}"),
+        };
+        if (req.Op is "scale" or "restart" or "deploy" or "remove")
+            audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+                Role = roleStr, Action = "k8s.op", Target = $"{cluster}/{req.Op}/{req.Deployment ?? req.Name}",
+                Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+        return Results.Json(result);
+    }
+    catch (ArgumentException ex) { return Results.Json(new { error = ex.Message }, statusCode: 400); }
+    catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
+    catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
+});
+static object Wrap(Func<object> f) => f();
+// ---- FR-A28 K8s 集成端点结束 ----
 // FR-A18 负载均衡专用端点：按操作分级鉴权（LbPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/lb", async (string id, LbOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
