@@ -30,6 +30,7 @@ const NAV = [
   { key: "g-sec", label: "安全", children: [
     { key: "/waf", label: "WAF 防火墙" },
     { key: "/audit", label: "权限与审计" },
+    { key: "/totp", label: "两步验证" },
   ]},
   { key: "g-ops", label: "运维", children: [
     { key: "/ai", label: "AI 运维" },

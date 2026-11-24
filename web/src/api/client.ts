@@ -49,14 +49,47 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 // ---- auth ----
+/** 密码正确但已启用 TOTP：需二次校验（FR-A16）。 */
+export class TotpRequiredError extends Error {
+  constructor() { super("totp_required"); }
+}
+
 export async function login(username: string, password: string): Promise<AuthUser> {
-  const r = await api<{ token?: string; username?: string; role?: string; error?: string }>(
+  const r = await api<{ token?: string; username?: string; role?: string; error?: string; totp_required?: boolean }>(
     "/api/auth/login",
     { method: "POST", body: JSON.stringify({ username, password }) },
   );
+  if (r.totp_required) throw new TotpRequiredError();
   if (!r.token) throw new Error(r.error ?? "login failed");
   localStorage.setItem("taoops_token", r.token);
   return { username: r.username ?? username, role: r.role ?? "Operator" };
+}
+
+/** TOTP 登录二次校验（6 位动态码或恢复码），成功签发会话。 */
+export async function totpVerify(username: string, code: string): Promise<AuthUser> {
+  const r = await api<{ token?: string; username?: string; role?: string; error?: string }>(
+    "/api/auth/totp/verify",
+    { method: "POST", body: JSON.stringify({ username, code }) },
+  );
+  if (!r.token) throw new Error(r.error ?? "totp verify failed");
+  localStorage.setItem("taoops_token", r.token);
+  return { username: r.username ?? username, role: r.role ?? "Operator" };
+}
+
+export async function totpStatus(username: string): Promise<{ enabled: boolean }> {
+  return api(`/api/auth/totp/status?username=${encodeURIComponent(username)}`);
+}
+
+export async function totpSetup(username: string, password: string): Promise<{ secret: string; otpauth_uri: string }> {
+  return api("/api/auth/totp/setup", { method: "POST", body: JSON.stringify({ username, password }) });
+}
+
+export async function totpEnable(username: string, code: string, password: string): Promise<{ recovery_codes: string[] }> {
+  return api("/api/auth/totp/enable", { method: "POST", body: JSON.stringify({ username, code, password }) });
+}
+
+export async function totpRegenerate(username: string, password: string): Promise<{ recovery_codes: string[] }> {
+  return api("/api/auth/totp/recovery/regenerate", { method: "POST", body: JSON.stringify({ username, password }) });
 }
 
 export async function bootstrap(username: string, password: string): Promise<void> {

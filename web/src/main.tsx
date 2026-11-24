@@ -12,6 +12,7 @@ import TermPage from "./pages/Term";
 import BackupPage from "./pages/Backup";
 import MigratePage from "./pages/Migrate";
 import LbPage from "./pages/Lb";
+import TotpPage from "./pages/Totp";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE, WEBSTATS_PAGE,
@@ -38,6 +39,7 @@ const router = createHashRouter([
     { path: "ssl", element: <ModulePage config={SSL_PAGE} /> },
     { path: "waf", element: <WafPage /> },
     { path: "audit", element: <AuditPage /> },
+    { path: "totp", element: <TotpPage /> },
     { path: "ai", element: <ModulePage config={AI_PAGE} /> },
     { path: "upgrade", element: <ModulePage config={UPGRADE_PAGE} /> },
     { path: "push", element: <ModulePage config={PUSH_PAGE} /> },

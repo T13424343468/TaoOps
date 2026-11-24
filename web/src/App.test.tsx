@@ -14,6 +14,7 @@ import TermPage from "./pages/Term";
 import BackupPage from "./pages/Backup";
 import MigratePage from "./pages/Migrate";
 import LbPage from "./pages/Lb";
+import TotpPage from "./pages/Totp";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
@@ -29,6 +30,8 @@ beforeAll(() => {
     if (u.includes("/api/audit/verify")) return json({ valid: true, broken_at_seq: null });
     if (u.includes("/api/audit")) return json([]);
     if (u.includes("/api/auth/users") || u.includes("/api/auth/lockouts")) return json([]);
+    if (u.includes("/api/auth/me")) return json({ user: "admin", role: "Admin" });
+    if (u.includes("/api/auth/totp/status")) return json({ enabled: false });
     if (u.includes("/api/sec/events")) return json([]);
     return json([]);
   }));
@@ -45,7 +48,7 @@ const renderAt = (el: React.ReactNode, path = "/") =>
     </ConfigProvider>,
   );
 
-describe("19 页全覆盖冒烟", () => {
+describe("20 页全覆盖冒烟", () => {
   it("登录页：登录与初始化两个页签", () => {
     renderAt(<LoginPage onLogin={() => {}} />);
     expect(screen.getByText("TaoOps 控制台")).toBeTruthy();
@@ -99,6 +102,14 @@ describe("19 页全覆盖冒烟", () => {
     expect(screen.getByText("上游组与后端")).toBeTruthy();
     expect(screen.getByText("添加后端")).toBeTruthy();
     expect(screen.getByText("健康检查")).toBeTruthy();
+  });
+
+  it("两步验证页：状态卡与绑定入口（真连 totp 端点）", async () => {
+    renderAt(<TotpPage />);
+    await waitFor(() => expect(screen.getByText("两步验证（TOTP）")).toBeTruthy());
+    expect(screen.getByText("当前状态")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("未启用")).toBeTruthy());
+    expect(screen.getByText("1. 生成绑定密钥（需密码复验）")).toBeTruthy();
   });
 
   const modulePages: [string, React.ReactNode, string][] = [
