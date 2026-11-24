@@ -18,10 +18,11 @@ import LogCleanPage from "./pages/LogClean";
 import DbReplicaPage from "./pages/DbReplica";
 import SslPage from "./pages/Ssl";
 import FilesPage from "./pages/Files";
+import MetricsPage from "./pages/Metrics";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FTP_PAGE, WEBSTATS_PAGE,
-  MONITOR_PAGE, NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
+  NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
 const router = createHashRouter([
@@ -29,7 +30,7 @@ const router = createHashRouter([
     { path: "dash", element: <DashPage /> },
     { path: "nodes", element: <ModulePage config={NODES_PAGE} /> },
     { path: "term", element: <TermPage /> },
-    { path: "monitor", element: <ModulePage config={MONITOR_PAGE} /> },
+    { path: "monitor", element: <MetricsPage /> },
     { path: "site", element: <ModulePage config={SITE_PAGE} /> },
     { path: "db", element: <ModulePage config={DB_PAGE} /> },
     { path: "files", element: <FilesPage /> },

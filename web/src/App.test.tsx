@@ -9,6 +9,7 @@ import zhCN from "antd/locale/zh_CN";
 import LoginPage from "./pages/Login";
 import DashPage from "./pages/Dash";
 import FilesPage from "./pages/Files";
+import MetricsPage from "./pages/Metrics";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
@@ -23,7 +24,7 @@ import SslPage from "./pages/Ssl";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE,
-  MONITOR_PAGE, NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
+  NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
 beforeAll(() => {
@@ -40,6 +41,7 @@ beforeAll(() => {
     if (u.includes("/files/edit")) return json({ exit_code: 0, output: "" });
     if (u.includes("/backup/policy")) return json({ exit_code: 0, output: "[]" });
     if (u.includes("/db/grants")) return json({ exit_code: 0, output: "[]" });
+    if (u.includes("/metrics")) return json([{ ts: Date.now(), cpu_used_pct: 12.5, mem_total_kb: 16000000, mem_used_kb: 8000000, disk_read_bps: 0, disk_write_bps: 0, net_rx_total: 0, net_tx_total: 0 }]);
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -133,7 +135,6 @@ describe("22 页全覆盖冒烟", () => {
     ["FTP", <ModulePage config={FTP_PAGE} />, "重置密码"],
     ["计划任务", <ModulePage config={CRON_PAGE} />, "立即执行"],
     ["环境变量", <ModulePage config={ENV_PAGE} />, "重载环境"],
-    ["监控告警", <ModulePage config={MONITOR_PAGE} />, "静默 1h"],
     ["AI 运维", <ModulePage config={AI_PAGE} />, "生成建议"],
     ["升级", <ModulePage config={UPGRADE_PAGE} />, "执行升级"],
   ];
@@ -143,6 +144,15 @@ describe("22 页全覆盖冒烟", () => {
       expect(screen.getByText(probe)).toBeTruthy();
     });
   }
+
+  it("监控页：实时曲线与进程 Top10（真连 metrics 端点）", async () => {
+    renderAt(<MetricsPage />);
+    await waitFor(() => expect(screen.getByText("资源监控")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/CPU 12\.5%/)).toBeTruthy());
+    expect(screen.getByText("近 1 小时")).toBeTruthy();
+    expect(screen.getByText("近 24 小时")).toBeTruthy();
+    expect(screen.getByText("进程 Top10（按 CPU）")).toBeTruthy();
+  });
 
   it("文件页：目录表与编辑抽屉（真连 files 端点）", async () => {
     const { container } = renderAt(<FilesPage />);

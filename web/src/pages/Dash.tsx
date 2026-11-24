@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card, Col, Row, Statistic, Table, Tag, Typography } from "antd";
 import { api } from "../api/client";
-import { mockMetrics } from "../api/mock";
 
 // FR-A22：节点健康表真连 /api/nodes，展示连接状态与最近在线时间；
 // 断连告警由面板后台巡检（NodeOfflineMonitor），此处仅展示。
+// FR-A23：24h 峰值 CPU 真连 /api/nodes/{id}/metrics（中控内存环形缓冲）。
 interface NodeView {
   nodeId: string;
   hostname: string;
@@ -13,18 +13,35 @@ interface NodeView {
   commandConnected: boolean;
 }
 
+interface MetricPoint {
+  ts: number;
+  cpu_used_pct: number;
+}
+
 const fmtTime = (ms: number) => (ms > 0 ? new Date(ms).toLocaleString() : "—");
 
 export default function DashPage() {
   const [nodes, setNodes] = useState<NodeView[]>([]);
-  const [metrics] = useState(() => mockMetrics());
+  const [peakCpu, setPeakCpu] = useState<number | null>(null);
 
   const loadNodes = useCallback(async () => {
     try { setNodes(await api<NodeView[]>("/api/nodes")); }
     catch { setNodes([]); }
   }, []);
 
+  // 24h 峰值 CPU：汇总所有节点环形缓冲内的采样点取最大值。
+  const loadPeak = useCallback(async (list: NodeView[]) => {
+    try {
+      const all = await Promise.all(
+        list.map((n) => api<MetricPoint[]>(`/api/nodes/${encodeURIComponent(n.nodeId)}/metrics?hours=24`).catch(() => [] as MetricPoint[])),
+      );
+      const peaks = all.flat().map((p) => p.cpu_used_pct);
+      setPeakCpu(peaks.length > 0 ? Math.max(...peaks) : null);
+    } catch { setPeakCpu(null); }
+  }, []);
+
   useEffect(() => { void loadNodes(); }, [loadNodes]);
+  useEffect(() => { void loadPeak(nodes); }, [nodes, loadPeak]);
 
   const online = nodes.filter((n) => n.commandConnected).length;
 
@@ -35,7 +52,7 @@ export default function DashPage() {
         <Col span={6}><Card><Statistic title="节点总数" value={nodes.length} /></Card></Col>
         <Col span={6}><Card><Statistic title="在线" value={online} valueStyle={{ color: "#3f8600" }} /></Card></Col>
         <Col span={6}><Card><Statistic title="离线" value={nodes.length - online} valueStyle={{ color: "#cf1322" }} /></Card></Col>
-        <Col span={6}><Card><Statistic title="24h 峰值 CPU%" value={Math.max(...metrics.map((m) => m.cpu))} /></Card></Col>
+        <Col span={6}><Card><Statistic title="24h 峰值 CPU%" value={peakCpu === null ? "—" : peakCpu.toFixed(1)} /></Card></Col>
       </Row>
       <Card title="节点健康" style={{ marginTop: 16 }} size="small">
         <Table
