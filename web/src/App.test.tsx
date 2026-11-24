@@ -16,6 +16,7 @@ import MigratePage from "./pages/Migrate";
 import LbPage from "./pages/Lb";
 import TotpPage from "./pages/Totp";
 import PushPage from "./pages/Push";
+import LogCleanPage from "./pages/LogClean";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
@@ -49,7 +50,7 @@ const renderAt = (el: React.ReactNode, path = "/") =>
     </ConfigProvider>,
   );
 
-describe("20 页全覆盖冒烟", () => {
+describe("21 页全覆盖冒烟", () => {
   it("登录页：登录与初始化两个页签", () => {
     renderAt(<LoginPage onLogin={() => {}} />);
     expect(screen.getByText("TaoOps 控制台")).toBeTruthy();
@@ -132,6 +133,14 @@ describe("20 页全覆盖冒烟", () => {
       expect(screen.getByText(probe)).toBeTruthy();
     });
   }
+
+  it("日志清理页：规则表与清理操作（真连 logclean 端点）", async () => {
+    renderAt(<LogCleanPage />);
+    await waitFor(() => expect(screen.getByText("日志清理")).toBeTruthy());
+    expect(screen.getByText("清理规则")).toBeTruthy();
+    expect(screen.getByText("添加规则")).toBeTruthy();
+    expect(screen.getByText("立即清理")).toBeTruthy();
+  });
 
   it("告警推送页：渠道管理与白名单", async () => {
     renderAt(<PushPage />);

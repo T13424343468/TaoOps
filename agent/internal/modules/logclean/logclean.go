@@ -194,7 +194,9 @@ func (m *Manager) opList() (registry.Result, error) {
 		rules = []Rule{}
 	}
 	out, _ := json.Marshal(rules)
-	return registry.Result{ExitCode: 0, Output: fmt.Sprintf("%d rule(s)", len(rules)), Data: map[string]any{"rules": json.RawMessage(out)}}, nil
+	// Output carries the JSON payload: the dispatch bridge surfaces only
+	// Output to the panel, so the frontend parses rules from here.
+	return registry.Result{ExitCode: 0, Output: string(out), Data: map[string]any{"rules": json.RawMessage(out)}}, nil
 }
 
 func (m *Manager) opAdd(args map[string]any) (registry.Result, error) {
@@ -291,7 +293,7 @@ func (m *Manager) opRun(args map[string]any) (registry.Result, error) {
 	if cleaned == nil {
 		out = []byte("[]")
 	}
-	return registry.Result{ExitCode: 0, Output: fmt.Sprintf("%d file(s) cleaned", len(cleaned)), Data: map[string]any{"cleaned": json.RawMessage(out)}}, nil
+	return registry.Result{ExitCode: 0, Output: string(out), Data: map[string]any{"cleaned": json.RawMessage(out)}}, nil
 }
 
 // matches reports whether path hits the rule under prefix semantics with

@@ -14,6 +14,7 @@ import MigratePage from "./pages/Migrate";
 import LbPage from "./pages/Lb";
 import TotpPage from "./pages/Totp";
 import PushPage from "./pages/Push";
+import LogCleanPage from "./pages/LogClean";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE, WEBSTATS_PAGE,
@@ -44,6 +45,7 @@ const router = createHashRouter([
     { path: "ai", element: <ModulePage config={AI_PAGE} /> },
     { path: "upgrade", element: <ModulePage config={UPGRADE_PAGE} /> },
     { path: "push", element: <PushPage /> },
+    { path: "logclean", element: <LogCleanPage /> },
   ]},
 ]);
 

@@ -36,6 +36,7 @@ const NAV = [
     { key: "/ai", label: "AI 运维" },
     { key: "/upgrade", label: "升级与规则包" },
     { key: "/push", label: "告警推送" },
+    { key: "/logclean", label: "日志清理" },
   ]},
 ];
 
