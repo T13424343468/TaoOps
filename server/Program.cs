@@ -63,6 +63,12 @@ builder.Services.AddSingleton<SslMonitor>(sp => new SslMonitor(
     sp.GetRequiredService<AlertCenter>(),
     sp.GetRequiredService<ILogger<SslMonitor>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<SslMonitor>());
+// FR-A22 节点离线巡检：60s 检查命令通道状态，断连超阈值边缘触发 warn 告警，恢复复位。
+builder.Services.AddSingleton<NodeOfflineMonitor>(sp => new NodeOfflineMonitor(
+    () => sp.GetRequiredService<NodeCommandBridge>().ListNodes().Select(n => (n.NodeId, n.CommandConnected)),
+    sp.GetRequiredService<AlertCenter>(),
+    sp.GetRequiredService<ILogger<NodeOfflineMonitor>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<NodeOfflineMonitor>());
 // 节点间备份中转（FR-A13）：源端分片流转发，过账不落盘，流量统计面板可查。
 builder.Services.AddSingleton<TaoOps.Server.Relay.RelayHub>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
