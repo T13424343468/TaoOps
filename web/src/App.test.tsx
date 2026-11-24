@@ -39,6 +39,7 @@ beforeAll(() => {
     if (u.includes("/cmd")) return json({ exit_code: 0, output: JSON.stringify({ entries: [{ name: "nginx.conf", is_dir: false, size: 12, mode: "-rw-r--r--" }] }) });
     if (u.includes("/files/edit")) return json({ exit_code: 0, output: "" });
     if (u.includes("/backup/policy")) return json({ exit_code: 0, output: "[]" });
+    if (u.includes("/db/grants")) return json({ exit_code: 0, output: "[]" });
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -165,6 +166,8 @@ describe("22 页全覆盖冒烟", () => {
     expect(screen.getByText("复制状态")).toBeTruthy();
     expect(screen.getByText("主库：创建复制账号")).toBeTruthy();
     expect(screen.getByText("从库：配置复制")).toBeTruthy();
+    expect(screen.getByText("数据库外访授权")).toBeTruthy();
+    expect(screen.getByText("新增授权")).toBeTruthy();
   });
 
   it("SSL 证书页：清单表与签发入口（真连 ssl 端点）", async () => {
