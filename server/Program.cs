@@ -3,6 +3,7 @@ using System.Text.Json;
 using TaoOps.Server.Alerts;
 using TaoOps.Server.Audit;
 using TaoOps.Server.Auth;
+using TaoOps.Server.Relay;
 using TaoOps.Server.Sec;
 using TaoOps.Server.Services;
 using TaoOps.Server.Waf;
@@ -32,6 +33,8 @@ builder.Services.AddSingleton<IntrusionDetector>();
 // 统一告警中心（FR-A19）：落盘 dataDir/alerts/，入侵检测与心跳磁盘水位接线。
 builder.Services.AddSingleton<AlertStore>(_ => new AlertStore(wafDataDir));
 builder.Services.AddSingleton<AlertCenter>();
+// 节点间备份中转（FR-A13）：源端分片流转发，过账不落盘，流量统计面板可查。
+builder.Services.AddSingleton<TaoOps.Server.Relay.RelayHub>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
 builder.Services.AddHostedService<StreamIngestorHostedService>();
 
@@ -197,6 +200,9 @@ app.MapGet("/api/alerts/unread", (AlertStore store) => Results.Json(new { count 
 app.MapPost("/api/alerts/{id}/read", (string id, AlertStore store) =>
     store.MarkRead(id) ? Results.Ok() : Results.NotFound());
 app.MapPost("/api/alerts/read-all", (AlertStore store) => Results.Json(new { marked = store.MarkAllRead() }));
+
+// ---- 节点间备份中转流量统计（FR-A13，契约 §7）----
+app.MapGet("/api/relay/stats", (TaoOps.Server.Relay.RelayHub relay) => Results.Json(relay.Stats()));
 
 // ---- 企业层 RBAC 权限清单（A13）：静态矩阵可查 ----
 app.MapGet("/api/auth/permissions", (HttpContext ctx) =>

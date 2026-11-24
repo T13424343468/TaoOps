@@ -29,16 +29,26 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
     private readonly ILogger<AgentService> _logger;
     /// <summary>统一告警中心（FR-A19）：心跳磁盘水位接线；测试直构时可为空。</summary>
     private readonly Alerts.AlertCenter? _alerts;
+    /// <summary>节点间备份中转（FR-A13）：源端分片流转发；测试直构时可注入。</summary>
+    private readonly Relay.RelayHub _relay;
 
     public AgentService(NodeRegistry registry, NodeCommandHub hub, NodeStreamHub streams,
-        ILogger<AgentService> logger, Alerts.AlertCenter? alerts = null)
+        ILogger<AgentService> logger, Alerts.AlertCenter? alerts = null, Relay.RelayHub? relay = null)
     {
         _registry = registry;
         _hub = hub;
         _streams = streams;
         _logger = logger;
         _alerts = alerts;
+        _relay = relay ?? new Relay.RelayHub(hub, alerts);
     }
+
+    /// <summary>节点间备份中转（FR-A13，契约 §7）：源端推流分片，中控转发至目标节点。</summary>
+    public override Task BackupRelay(
+        IAsyncStreamReader<RelayChunk> requestStream,
+        IServerStreamWriter<RelayAck> responseStream,
+        ServerCallContext context)
+        => _relay.HandleStream(requestStream, responseStream, context);
 
     public override Task<RegisterResponse> Register(RegisterRequest request, ServerCallContext context)
     {
