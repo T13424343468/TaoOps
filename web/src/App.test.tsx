@@ -1,4 +1,4 @@
-// Page smoke tests: one per prototype page (17 pages full coverage, v3.16).
+// Page smoke tests: one per prototype page (19 pages full coverage, v3.16).
 // Real-API pages are rendered with fetch mocked; mock-backed pages render as-is.
 import { describe, expect, it, vi, beforeAll } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
@@ -11,6 +11,8 @@ import DashPage from "./pages/Dash";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
+import BackupPage from "./pages/Backup";
+import MigratePage from "./pages/Migrate";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
@@ -42,7 +44,7 @@ const renderAt = (el: React.ReactNode, path = "/") =>
     </ConfigProvider>,
   );
 
-describe("17 页全覆盖冒烟", () => {
+describe("19 页全覆盖冒烟", () => {
   it("登录页：登录与初始化两个页签", () => {
     renderAt(<LoginPage onLogin={() => {}} />);
     expect(screen.getByText("TaoOps 控制台")).toBeTruthy();
@@ -73,6 +75,21 @@ describe("17 页全覆盖冒烟", () => {
     renderAt(<TermPage />);
     expect(screen.getByText("终端")).toBeTruthy();
     expect(screen.getByText("连接节点")).toBeTruthy();
+  });
+
+  it("备份页：备份列表与跨节点发送", async () => {
+    renderAt(<BackupPage />);
+    await waitFor(() => expect(screen.getByText("备份档案")).toBeTruthy());
+    expect(screen.getByText("发送到其他节点")).toBeTruthy();
+    expect(screen.getByText("中转流量统计")).toBeTruthy();
+  });
+
+  it("迁移页：四步迁移流程", async () => {
+    renderAt(<MigratePage />);
+    await waitFor(() => expect(screen.getByText("一键迁移")).toBeTruthy());
+    expect(screen.getByText("1. 预检（源节点）")).toBeTruthy();
+    expect(screen.getByText("2. 打包（源节点）")).toBeTruthy();
+    expect(screen.getByText("4. 目标端还原（confirm）")).toBeTruthy();
   });
 
   const modulePages: [string, React.ReactNode, string][] = [

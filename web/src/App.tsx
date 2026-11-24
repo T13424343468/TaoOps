@@ -23,6 +23,7 @@ const NAV = [
     { key: "/docker", label: "Docker 管理" },
     { key: "/webstats", label: "网站统计" },
     { key: "/backup", label: "备份还原" },
+    { key: "/migrate", label: "一键迁移" },
     { key: "/lb", label: "负载均衡" },
     { key: "/ssl", label: "SSL 证书" },
   ]},
