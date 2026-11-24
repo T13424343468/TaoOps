@@ -21,6 +21,7 @@ const NAV = [
     { key: "/cron", label: "计划任务" },
     { key: "/env", label: "环境变量" },
     { key: "/docker", label: "Docker 管理" },
+    { key: "/webstats", label: "网站统计" },
     { key: "/lb", label: "负载均衡" },
     { key: "/ssl", label: "SSL 证书" },
   ]},

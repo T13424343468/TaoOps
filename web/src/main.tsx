@@ -11,7 +11,7 @@ import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
 import ModulePage from "./pages/ModulePage";
 import {
-  AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
+  AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE, WEBSTATS_PAGE,
   LB_PAGE, MONITOR_PAGE, NODES_PAGE, PUSH_PAGE, SITE_PAGE, SSL_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
@@ -28,6 +28,7 @@ const router = createHashRouter([
     { path: "cron", element: <ModulePage config={CRON_PAGE} /> },
     { path: "env", element: <ModulePage config={ENV_PAGE} /> },
     { path: "docker", element: <ModulePage config={DOCKER_PAGE} /> },
+    { path: "webstats", element: <ModulePage config={WEBSTATS_PAGE} /> },
     { path: "lb", element: <ModulePage config={LB_PAGE} /> },
     { path: "ssl", element: <ModulePage config={SSL_PAGE} /> },
     { path: "waf", element: <WafPage /> },
