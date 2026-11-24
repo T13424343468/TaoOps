@@ -35,6 +35,9 @@ beforeAll(() => {
     if (u.includes("/api/audit")) return json([]);
     if (u.includes("/api/auth/users") || u.includes("/api/auth/lockouts")) return json([]);
     if (u.includes("/api/auth/me")) return json({ user: "admin", role: "Admin" });
+    if (u.includes("/api/nodes")) return json([
+      { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
+    ]);
     if (u.includes("/api/auth/totp/status")) return json({ enabled: false });
     if (u.includes("/api/sec/events")) return json([]);
     return json([]);
@@ -59,10 +62,10 @@ describe("22 页全覆盖冒烟", () => {
     expect(screen.getByText("首次初始化")).toBeTruthy();
   });
 
-  it("总览页：节点健康表", () => {
+  it("总览页：节点健康表", async () => {
     renderAt(<DashPage />);
     expect(screen.getByText("节点健康")).toBeTruthy();
-    expect(screen.getByText("web-01")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("web-01")).toBeTruthy());
   });
 
   it("WAF 页：规则表与操作", async () => {

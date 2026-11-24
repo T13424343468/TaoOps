@@ -1,11 +1,32 @@
-import { useState } from "react";
-import { Card, Col, Row, Statistic, Table, Typography } from "antd";
-import { mockMetrics, mockNodes, type NodeInfo } from "../api/mock";
+import { useCallback, useEffect, useState } from "react";
+import { Card, Col, Row, Statistic, Table, Tag, Typography } from "antd";
+import { api } from "../api/client";
+import { mockMetrics } from "../api/mock";
+
+// FR-A22：节点健康表真连 /api/nodes，展示连接状态与最近在线时间；
+// 断连告警由面板后台巡检（NodeOfflineMonitor），此处仅展示。
+interface NodeView {
+  nodeId: string;
+  hostname: string;
+  lastSeenMs: number;
+  registeredAtMs: number;
+  commandConnected: boolean;
+}
+
+const fmtTime = (ms: number) => (ms > 0 ? new Date(ms).toLocaleString() : "—");
 
 export default function DashPage() {
-  const [nodes] = useState<NodeInfo[]>(() => mockNodes());
+  const [nodes, setNodes] = useState<NodeView[]>([]);
   const [metrics] = useState(() => mockMetrics());
-  const online = nodes.filter((n) => n.status === "online").length;
+
+  const loadNodes = useCallback(async () => {
+    try { setNodes(await api<NodeView[]>("/api/nodes")); }
+    catch { setNodes([]); }
+  }, []);
+
+  useEffect(() => { void loadNodes(); }, [loadNodes]);
+
+  const online = nodes.filter((n) => n.commandConnected).length;
 
   return (
     <div>
@@ -24,13 +45,13 @@ export default function DashPage() {
           dataSource={nodes}
           columns={[
             { title: "节点", dataIndex: "hostname" },
-            { title: "ID", dataIndex: "nodeId" },
-            { title: "系统", dataIndex: "os" },
-            { title: "状态", dataIndex: "status", render: (s: string) => s === "online" ? "在线" : "离线" },
-            { title: "CPU%", dataIndex: "cpu" },
-            { title: "内存%", dataIndex: "mem" },
-            { title: "磁盘%", dataIndex: "disk" },
-            { title: "负载", dataIndex: "load" },
+            { title: "ID", dataIndex: "nodeId", render: (v: string) => v.slice(0, 8) },
+            {
+              title: "连接状态", dataIndex: "commandConnected",
+              render: (ok: boolean) => ok ? <Tag color="green">在线</Tag> : <Tag color="red">离线</Tag>,
+            },
+            { title: "最近在线", dataIndex: "lastSeenMs", render: fmtTime },
+            { title: "注册时间", dataIndex: "registeredAtMs", render: fmtTime },
           ]}
         />
       </Card>
