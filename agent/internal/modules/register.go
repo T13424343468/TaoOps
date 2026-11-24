@@ -17,9 +17,9 @@ import (
 	"taoops/agent/internal/modules/fw"
 	"taoops/agent/internal/modules/registry"
 	"taoops/agent/internal/modules/secguard"
-	"taoops/agent/internal/modules/tamperguard"
 	"taoops/agent/internal/modules/site"
 	"taoops/agent/internal/modules/sysinfo"
+	"taoops/agent/internal/modules/tamperguard"
 	"taoops/agent/internal/modules/term"
 	"taoops/agent/internal/modules/webstats"
 )
@@ -35,8 +35,10 @@ type Paths struct {
 	AuditPath  string
 }
 
-// RegisterAll installs every base-layer module handler into r.
-func RegisterAll(r *registry.Registry, p Paths) error {
+// RegisterAll installs every base-layer module handler into r and returns
+// the backup manager so main can wire the FR-A13 relay sender.
+func RegisterAll(r *registry.Registry, p Paths) (*backup.Manager, error) {
+	backupMgr := backup.NewManager(p.BackupDir)
 	steps := []struct {
 		name string
 		fn   func() error
@@ -51,7 +53,7 @@ func RegisterAll(r *registry.Registry, p Paths) error {
 		{"env", func() error { return env.Register(r, env.NewManager(p.PackageDir, p.InstallDir)) }},
 		{"fw", func() error { return fw.Register(r, fw.NewManager(p.AuditPath)) }},
 		{"ftp", func() error { return ftp.Register(r, ftp.NewManager(filepath.Join(p.ConfDir, "ftp.json"))) }},
-		{"backup", func() error { return backup.Register(r, backup.NewManager(p.BackupDir)) }},
+		{"backup", func() error { return backup.Register(r, backupMgr) }},
 		{"secguard", func() error {
 			return secguard.Register(r, secguard.NewManager(secguard.FromEnv(filepath.Join(p.ConfDir, "secguard.json"))))
 		}},
@@ -64,8 +66,8 @@ func RegisterAll(r *registry.Registry, p Paths) error {
 	}
 	for _, s := range steps {
 		if err := s.fn(); err != nil {
-			return fmt.Errorf("modules: register %s: %w", s.name, err)
+			return nil, fmt.Errorf("modules: register %s: %w", s.name, err)
 		}
 	}
-	return nil
+	return backupMgr, nil
 }

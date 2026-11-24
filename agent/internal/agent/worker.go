@@ -173,7 +173,7 @@ func (w *Worker) pumpCommands(ctx context.Context, client pb.AgentServiceClient,
 		go func() {
 			execCtx, execCancel := dispatch.TimeoutContext(streamCtx, req.GetTimeoutMs())
 			defer execCancel()
-			code, out := w.dispatch.Execute(execCtx, req.GetCommand(), req.GetArgs())
+			code, out := w.dispatch.Execute(execCtx, req.GetCommand(), req.GetArgs(), req.GetBlob())
 			select {
 			case results <- &pb.DispatchResult{RequestId: req.GetRequestId(), ExitCode: code, Output: out}:
 			case <-streamCtx.Done():

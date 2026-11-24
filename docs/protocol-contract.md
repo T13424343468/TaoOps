@@ -123,3 +123,21 @@ message LogControl {
 - 鉴权：走 `/api` 统一 RBAC 中间件；只读角色（ReadOnly）写方法 403，Operator/Admin 可下发。
 - 错误映射：节点未注册 → 404；命令不在白名单或参数含注入字符 → 400；节点命令通道未连接 → 503；下发超时 → 504。
 - `request_id` 由中控生成（UUID），与 gRPC 路径同口径，用于结果匹配与审计溯源。
+
+## 7. 节点间备份中转（FR-A13）
+
+备份目标新增「其他受控节点」：源端 Agent 经中控中转（只过账不落盘、流式转发）把备份包传到目标节点 BackupDir。传输走自有 gRPC 通道，不经任何第三方；大文件中转复用 files 模块 4MB 分片语义（ChunkSize=4<<20、manifest 断点续传）。
+
+- **新增 RPC**：`BackupRelay(stream RelayChunk) returns (stream RelayAck)`，由源端 Agent 发起。RelayChunk 字段：`relay_id`、`target_node_id`、`upload_id`、`name`（备份名）、`chunk_index`、`total_size`（备份包声明大小）、`chunk_count`、`file_sha256`（整包）、`chunk_sha256`（本分片）、`data`（≤4MB）、`eof`（末分片标记，请求整包校验）、`source`（源端原始备份来源路径，目标端 manifest 记录，跨节点还原用）。
+- **中控转发**：每个分片经 `CommandStream` 以 `backup.manage op=relay_put` 下发到目标节点，`DispatchRequest.blob`（新增 `bytes` 字段）承载分片字节。单目标节点并发转发数=1；中控单流在途内存缓冲 ≤64MB（实现为单分片顺序转发，实际占用 4MB）。中控按 relay 记录中转流量（relayed_bytes），面板经 `GET /api/relay/stats` 查询（ReadOnly 及以上可读）。
+- **目标端 ops（backup.manage）**：
+  - `relay_begin`（args: `upload_id`、`name`、`total_size`、`chunk_count`、`file_sha256`）：磁盘预检——剩余空间 < total_size 即拒收并告警（非写满才失败）；建立装配会话目录与 manifest。
+  - `relay_put`（args: `upload_id`、`chunk_index`、`chunk_sha256`；blob=分片字节）：分片级 SHA-256 校验，失败 nack 由源端重传该分片；写入 part 文件并更新 manifest（幂等，重复分片直接确认）。
+  - `relay_status`（args: `upload_id`）：返回已收分片清单，供断点续传。
+  - `relay_assemble`（args: `upload_id`）：全部分片到齐后拼装至 BackupDir（全量，不继承 FR-A9 增量），整包 SHA-256 仅作最终完整性确认；失败清理装配会话并告警。
+  - `relay_abort`（args: `upload_id`）：清理装配会话。
+- **源端 op（backup.manage）**：`send`（args: `file`、`target_node`、`name`）——异步发起（返回 `relay_id`，进度经 `send_status` 查询），流式读档、逐分片计算 SHA-256 推送；断线后重跑 `send` 即续传（目标端已收分片幂等跳过）。单 Agent 同一时刻至多一个在途 send。`send_status`（args: `relay_id`）返回状态/进度/错误。
+- **信任模型**：默认中控可见备份明文（过账转发）；源端加密为后续可选项，本期不做。
+- **告警接线（FR-A19）**：磁盘预检拒收、分片重传耗尽、整包校验失败 → warn 告警（source=backup）。
+- **还原口径**：跨节点还原 = 持有备份的节点对目标节点执行 `send`，目标端 `restore` 本地执行；还原操作需 `confirm=true`，还原前自动快照（同 FR-A9）。
+- **审计**：relay_begin/put/assemble/abort 经既有 `node.cmd` 审计哈希链留痕（口径同 §6）。

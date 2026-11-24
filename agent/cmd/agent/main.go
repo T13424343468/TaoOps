@@ -13,6 +13,7 @@ import (
 	"taoops/agent/internal/metrics"
 	"taoops/agent/internal/modules"
 	"taoops/agent/internal/modules/registry"
+	"taoops/agent/internal/relay"
 )
 
 func envOr(key, fallback string) string {
@@ -43,13 +44,18 @@ func main() {
 		AuditPath:  envOr("TAOOPS_AUDIT_PATH", "/var/lib/taoops/audit.json"),
 	}
 	r := registry.New()
-	if err := modules.RegisterAll(r, paths); err != nil {
+	backupMgr, err := modules.RegisterAll(r, paths)
+	if err != nil {
 		log.Printf("agent exited: %v", err)
 		os.Exit(1)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// FR-A13：节点间备份中转发送端（走与命令流同一套 TLS+TOFU 传输）。
+	backupMgr.SetSender(relay.NewSender(serverURL))
+	backupMgr.SetContextFactory(func() context.Context { return ctx })
 
 	log.Printf("TaoOps Agent %s -> %s (modules: %v)", metrics.AgentVersion, serverURL, r.Names())
 	w := agent.NewWorker(serverURL, agentID, metrics.Collect, dispatch.New(r), log.Printf)

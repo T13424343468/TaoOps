@@ -19,7 +19,7 @@ func TestRegisterAllInstallsEveryModule(t *testing.T) {
 		AuditPath:  filepath.Join(dir, "audit.log"),
 	}
 	r := registry.New()
-	if err := RegisterAll(r, p); err != nil {
+	if _, err := RegisterAll(r, p); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	want := []string{
@@ -53,10 +53,10 @@ func TestRegisterAllTwiceIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	p := Paths{AuditPath: filepath.Join(dir, "a.log")}
 	r := registry.New()
-	if err := RegisterAll(r, p); err != nil {
+	if _, err := RegisterAll(r, p); err != nil {
 		t.Fatalf("first RegisterAll: %v", err)
 	}
-	if err := RegisterAll(r, p); err != nil {
+	if _, err := RegisterAll(r, p); err != nil {
 		t.Fatalf("second RegisterAll: %v", err)
 	}
 	if len(r.Names()) != 14 {

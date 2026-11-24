@@ -6,6 +6,7 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"taoops/agent/internal/modules/registry"
@@ -40,6 +42,12 @@ type Manifest struct {
 type Manager struct {
 	backupDir string
 	now       func() time.Time
+
+	// FR-A13 节点间备份：中转发送端与在途发送状态。
+	relaySender Sender
+	relayCtxFn  func() context.Context
+	relayMu     sync.Mutex
+	activeSend  *relayState
 }
 
 // NewManager returns a Manager storing archives under backupDir.
@@ -63,8 +71,22 @@ func (m *Manager) handle(args map[string]any) (registry.Result, error) {
 		return m.opRestore(args, false)
 	case "rollback":
 		return m.opRestore(args, true)
+	case "send":
+		return m.opSend(args)
+	case "send_status":
+		return m.opSendStatus(args)
+	case "relay_begin":
+		return m.opRelayBegin(args)
+	case "relay_put":
+		return m.opRelayPut(args)
+	case "relay_status":
+		return m.opRelayStatus(args)
+	case "relay_assemble":
+		return m.opRelayAssemble(args)
+	case "relay_abort":
+		return m.opRelayAbort(args)
 	}
-	return registry.Result{ExitCode: 2}, fmt.Errorf("backup: unknown op %q (want create|list|restore|rollback)", op)
+	return registry.Result{ExitCode: 2}, fmt.Errorf("backup: unknown op %q (want create|list|restore|rollback|send|send_status|relay_begin|relay_put|relay_status|relay_assemble|relay_abort)", op)
 }
 
 func str(args map[string]any, key string) string {
