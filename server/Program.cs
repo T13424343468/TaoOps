@@ -501,6 +501,23 @@ app.MapPost("/api/nodes/{id}/ssl", async (string id, SslOpRequest req, HttpConte
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+app.MapPost("/api/nodes/{id}/db/grants", async (string id, DbGrantRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DbPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for db grant op" }, statusCode: 403);
+    }
+    var args = DbGrantArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "db.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 app.MapPost("/api/nodes/{id}/backup/policy", async (string id, BackupPolicyRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
     var roleStr = http.Items["taoops.role"]?.ToString() ?? "";

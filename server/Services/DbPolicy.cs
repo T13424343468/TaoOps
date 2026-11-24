@@ -14,6 +14,8 @@ public static class DbPolicy
     public static UserRole RequiredRole(string op) => op switch
     {
         "replica_status" => UserRole.ReadOnly,
+        "db_grant_list" => UserRole.ReadOnly,
+        "db_grant_add" or "db_grant_revoke" => UserRole.Admin,
         "master_grant" or "replica_config" or "replica_reset" => UserRole.Admin,
         _ => UserRole.Admin,
     };
@@ -33,6 +35,25 @@ public static class DbPolicy
 /// <summary>FR-A15 复制端点请求体。</summary>
 public sealed record DbReplicaRequest(string? Op, string? ReplicaHost, string? MasterHost, string? MasterPort,
     string? MasterUser, string? MasterPassword, string? MasterLogFile, int? MasterLogPos, int TimeoutMs);
+
+/// <summary>FR-A27 数据库外访端点请求体。</summary>
+public sealed record DbGrantRequest(string? Op, string? Database, string? User, string? Host,
+    IReadOnlyList<string>? Privileges, bool? Confirm, int TimeoutMs);
+
+/// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+internal static class DbGrantArgs
+{
+    public static IReadOnlyList<string> Build(DbGrantRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Database)) args.Add($"database={req.Database}");
+        if (!string.IsNullOrEmpty(req.User)) args.Add($"user={req.User}");
+        if (!string.IsNullOrEmpty(req.Host)) args.Add($"host={req.Host}");
+        if (req.Privileges is { Count: > 0 }) args.Add($"privileges={string.Join(",", req.Privileges)}");
+        if (req.Confirm is bool c) args.Add($"confirm={(c ? "true" : "false")}");
+        return args;
+    }
+}
 
 /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
 internal static class DbReplicaArgs
