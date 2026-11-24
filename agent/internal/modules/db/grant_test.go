@@ -136,5 +136,5 @@ func TestGrantHandlerOps(t *testing.T) {
 	if _, err := h(map[string]any{"op": "db_grant_revoke", "database": "app_db", "user": "u1", "host": "10.%", "confirm": "true"}); err != nil {
 		t.Fatalf("db_grant_revoke confirm: %v", err)
 	}
-	fmt.Sprint() // keep fmt import
+	_ = fmt.Sprint // keep fmt import
 }

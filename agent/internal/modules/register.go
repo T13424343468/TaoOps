@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"taoops/agent/internal/modules/appdeploy"
 	"taoops/agent/internal/modules/backup"
 	"taoops/agent/internal/modules/cron"
 	"taoops/agent/internal/modules/db"
@@ -52,6 +53,7 @@ func RegisterAll(r *registry.Registry, p Paths) (*backup.Manager, error) {
 		{"site", func() error { return site.Register(r, site.NewManager(p.ConfDir, p.BackupDir)) }},
 		{"db", func() error { return db.Register(r, db.NewManager(p.BackupDir)) }},
 		{"docker", func() error { return docker.Register(r, docker.NewManager(filepath.Join(p.LogDir, "docker.audit"))) }},
+		{"appdeploy", func() error { return appdeploy.Register(r, appdeploy.NewManager(filepath.Join(p.DataDir, "apps"), filepath.Join(p.LogDir, "appdeploy.audit"))) }},
 		{"files", func() error { return files.Register(r, files.NewAssembler(p.SessionDir)) }},
 		{"term", func() error { return term.Register(r, term.NewManager()) }},
 		{"cron", func() error { return cron.Register(r, cron.NewManager(p.LogDir)) }},
