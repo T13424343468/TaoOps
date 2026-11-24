@@ -42,7 +42,7 @@ const router = createHashRouter([
     { path: "totp", element: <TotpPage /> },
     { path: "ai", element: <ModulePage config={AI_PAGE} /> },
     { path: "upgrade", element: <ModulePage config={UPGRADE_PAGE} /> },
-    { path: "push", element: <ModulePage config={PUSH_PAGE} /> },
+    { path: "push", element: <PushPage /> },
   ]},
 ]);
 

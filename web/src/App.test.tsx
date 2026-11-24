@@ -124,7 +124,6 @@ describe("20 页全覆盖冒烟", () => {
     ["监控告警", <ModulePage config={MONITOR_PAGE} />, "静默 1h"],
     ["AI 运维", <ModulePage config={AI_PAGE} />, "生成建议"],
     ["升级", <ModulePage config={UPGRADE_PAGE} />, "执行升级"],
-    ["告警推送", <ModulePage config={PUSH_PAGE} />, "测试推送"],
   ];
   for (const [name, el, probe] of modulePages) {
     it(`${name}页：mock 提示与操作按钮`, () => {
@@ -132,4 +131,12 @@ describe("20 页全覆盖冒烟", () => {
       expect(screen.getByText(probe)).toBeTruthy();
     });
   }
+
+  it("告警推送页：渠道管理与白名单", async () => {
+    renderAt(<PushPage />);
+    await waitFor(() => expect(screen.getByText("推送渠道")).toBeTruthy());
+    expect(screen.getByText("添加渠道")).toBeTruthy();
+    expect(screen.getByText(/SSRF 白名单/)).toBeTruthy();
+    expect(screen.getByText("推送日志")).toBeTruthy();
+  });
 });
