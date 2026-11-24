@@ -230,6 +230,24 @@ app.MapPost("/api/nodes/{id}/docker", async (string id, DockerOpRequest req, Htt
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// FR-A12 网站统计专用端点：按操作分级鉴权（WebStatsPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/webstats", async (string id, WebStatsOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !WebStatsPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for webstats op" }, statusCode: 403);
+    }
+    var args = WebStatsOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "webstats.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 app.MapPost("/api/nodes/{id}/cmd", async (string id, NodeCmdRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
     try
@@ -284,6 +302,23 @@ public sealed record NodeCmdRequest(string? Command, IReadOnlyList<string>? Args
 
 // ---- FR-A11 Docker 下发请求 ----
 public sealed record DockerOpRequest(string? Op, string? Name, string? Ref, string? Command, int? Tail, int TimeoutMs);
+
+// ---- FR-A12 网站统计下发请求 ----
+public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, string? From, string? To, int TimeoutMs);
+
+internal static class WebStatsOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(WebStatsOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Site)) args.Add($"site={req.Site}");
+        if (!string.IsNullOrEmpty(req.Path)) args.Add($"path={req.Path}");
+        if (!string.IsNullOrEmpty(req.From)) args.Add($"from={req.From}");
+        if (!string.IsNullOrEmpty(req.To)) args.Add($"to={req.To}");
+        return args;
+    }
+}
 
 internal static class DockerOpArgs
 {
