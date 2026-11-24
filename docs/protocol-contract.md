@@ -176,7 +176,7 @@ message LogControl {
 - **鉴权（LbPolicy，中控）**：`list`/`health` = ReadOnly 及以上；`add`/`remove`/`drain`/`undrain` = Operator 及以上；未知操作默认 Admin（默认拒绝）。专用端点 `POST /api/nodes/{id}/lb`，经下发桥审计留痕（口径同 §6）。
 - **审计**：全部变更 ops 经既有 `node.cmd` 审计哈希链留痕；Agent 侧审计文件记录每次片段变更前后摘要。
 
-## 9. 自定义告警推送（FR-A20）
+## 11. 自定义告警推送（FR-A20）
 
 告警触发时向用户自填 webhook（钉钉/飞书/企业微信机器人或任意 HTTP 端点）POST JSON。纯中控侧能力，不涉节点下发，不新增 RPC；平台侧不建任何推送服务。
 
