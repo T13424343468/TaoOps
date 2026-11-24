@@ -10,6 +10,7 @@ import LoginPage from "./pages/Login";
 import DashPage from "./pages/Dash";
 import FilesPage from "./pages/Files";
 import MetricsPage from "./pages/Metrics";
+import AppDeployPage from "./pages/AppDeploy";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
@@ -42,6 +43,7 @@ beforeAll(() => {
     if (u.includes("/backup/policy")) return json({ exit_code: 0, output: "[]" });
     if (u.includes("/db/grants")) return json({ exit_code: 0, output: "[]" });
     if (u.includes("/metrics")) return json([{ ts: Date.now(), cpu_used_pct: 12.5, mem_total_kb: 16000000, mem_used_kb: 8000000, disk_read_bps: 0, disk_write_bps: 0, net_rx_total: 0, net_tx_total: 0 }]);
+    if (u.includes("/apps")) return json({ exit_code: 0, output: JSON.stringify({ templates: [{ id: "nginx", name: "Nginx 网页服务器", arch: "amd64+arm64", kind: "single", services: [{ name: "nginx", image: "nginx:stable" }] }], apps: [{ app: "my-site", template_id: "nginx", images: ["nginx:stable"], deployed_at: "2026-11-24T15:00:00Z", health: "healthy" }] }) });
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -62,7 +64,7 @@ const renderAt = (el: React.ReactNode, path = "/") =>
     </ConfigProvider>,
   );
 
-describe("22 页全覆盖冒烟", () => {
+describe("23 页全覆盖冒烟", () => {
   it("登录页：登录与初始化两个页签", () => {
     renderAt(<LoginPage onLogin={() => {}} />);
     expect(screen.getByText("TaoOps 控制台")).toBeTruthy();
@@ -152,6 +154,15 @@ describe("22 页全覆盖冒烟", () => {
     expect(screen.getByText("近 1 小时")).toBeTruthy();
     expect(screen.getByText("近 24 小时")).toBeTruthy();
     expect(screen.getByText("进程 Top10（按 CPU）")).toBeTruthy();
+  });
+
+  it("应用部署页：模板库与已部署应用（真连 apps 端点）", async () => {
+    renderAt(<AppDeployPage />);
+    await waitFor(() => expect(screen.getByText("应用一键部署")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Nginx 网页服务器")).toBeTruthy());
+    expect(screen.getByText("已部署应用")).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("my-site")).toBeTruthy());
+    expect(screen.getByText("healthy")).toBeTruthy();
   });
 
   it("文件页：目录表与编辑抽屉（真连 files 端点）", async () => {
