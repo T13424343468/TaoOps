@@ -76,6 +76,15 @@ builder.Services.AddSingleton<BackupScheduleMonitor>(sp => new BackupScheduleMon
     sp.GetRequiredService<AlertCenter>(),
     sp.GetRequiredService<ILogger<BackupScheduleMonitor>>()));
 builder.Services.AddHostedService(sp => sp.GetRequiredService<BackupScheduleMonitor>());
+// FR-A23 资源实时监控：60s 对在线节点采样 sysinfo.overview op=metrics_sample，
+// 入内存环形缓冲（24h×60s=1440 点，不落盘重启清零），采样失败静默。
+builder.Services.AddSingleton<MetricsStore>();
+builder.Services.AddSingleton<MetricsSampler>(sp => new MetricsSampler(
+    sp.GetRequiredService<NodeCommandBridge>(),
+    () => sp.GetRequiredService<NodeCommandBridge>().ListNodes().Select(n => (n.NodeId, n.CommandConnected)),
+    sp.GetRequiredService<MetricsStore>(),
+    sp.GetRequiredService<ILogger<MetricsSampler>>()));
+builder.Services.AddHostedService(sp => sp.GetRequiredService<MetricsSampler>());
 // 节点间备份中转（FR-A13）：源端分片流转发，过账不落盘，流量统计面板可查。
 builder.Services.AddSingleton<TaoOps.Server.Relay.RelayHub>();
 // 事件回流自动订阅（M3 企业层班 A4）：节点上线后免手工触发即建立 WAF/SEC 订阅。
@@ -375,6 +384,13 @@ app.MapGet("/api/auth/permissions", (HttpContext ctx) =>
 
 // ---- 节点列表与 HTTP 下发桥（项5，契约 §6）----
 app.MapGet("/api/nodes", (NodeCommandBridge bridge) => Results.Json(bridge.ListNodes()));
+// FR-A23 资源实时监控查询：内存环形缓冲，hours=1|24（默认 1），任意已登录角色可查。
+app.MapGet("/api/nodes/{id}/metrics", (string id, MetricsStore store, int? hours) =>
+{
+    var h = hours is 1 or 24 ? hours.Value : 1;
+    var since = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - h * 3_600_000L;
+    return Results.Json(store.Query(id, since));
+});
 // FR-A11 Docker 专用端点：按操作分级鉴权（DockerPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/docker", async (string id, DockerOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
