@@ -8,6 +8,7 @@ import zhCN from "antd/locale/zh_CN";
 
 import LoginPage from "./pages/Login";
 import DashPage from "./pages/Dash";
+import FilesPage from "./pages/Files";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
@@ -21,7 +22,7 @@ import DbReplicaPage from "./pages/DbReplica";
 import SslPage from "./pages/Ssl";
 import ModulePage from "./pages/ModulePage";
 import {
-  AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE,
+  AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE,
   MONITOR_PAGE, NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
@@ -35,6 +36,8 @@ beforeAll(() => {
     if (u.includes("/api/audit")) return json([]);
     if (u.includes("/api/auth/users") || u.includes("/api/auth/lockouts")) return json([]);
     if (u.includes("/api/auth/me")) return json({ user: "admin", role: "Admin" });
+    if (u.includes("/cmd")) return json({ exit_code: 0, output: JSON.stringify({ entries: [{ name: "nginx.conf", is_dir: false, size: 12, mode: "-rw-r--r--" }] }) });
+    if (u.includes("/files/edit")) return json({ exit_code: 0, output: "" });
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -123,7 +126,6 @@ describe("22 页全覆盖冒烟", () => {
     ["多机中控", <ModulePage config={NODES_PAGE} />, "批量下发（跨机）"],
     ["网站", <ModulePage config={SITE_PAGE} />, "重载配置"],
     ["数据库", <ModulePage config={DB_PAGE} />, "立即备份"],
-    ["文件", <ModulePage config={FILES_PAGE} />, "打包下载"],
     ["FTP", <ModulePage config={FTP_PAGE} />, "重置密码"],
     ["计划任务", <ModulePage config={CRON_PAGE} />, "立即执行"],
     ["环境变量", <ModulePage config={ENV_PAGE} />, "重载环境"],
@@ -137,6 +139,14 @@ describe("22 页全覆盖冒烟", () => {
       expect(screen.getByText(probe)).toBeTruthy();
     });
   }
+
+  it("文件页：目录表与编辑抽屉（真连 files 端点）", async () => {
+    const { container } = renderAt(<FilesPage />);
+    await waitFor(() => expect(screen.getByText("文件管理")).toBeTruthy());
+    expect(screen.getByText(/目录：/)).toBeTruthy();
+    await waitFor(() => expect(screen.getByText("nginx.conf")).toBeTruthy());
+    expect(/刷\s*新/.test(container.innerHTML)).toBe(true);
+  });
 
   it("日志清理页：规则表与清理操作（真连 logclean 端点）", async () => {
     renderAt(<LogCleanPage />);

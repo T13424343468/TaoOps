@@ -17,9 +17,10 @@ import PushPage from "./pages/Push";
 import LogCleanPage from "./pages/LogClean";
 import DbReplicaPage from "./pages/DbReplica";
 import SslPage from "./pages/Ssl";
+import FilesPage from "./pages/Files";
 import ModulePage from "./pages/ModulePage";
 import {
-  AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FILES_PAGE, FTP_PAGE, WEBSTATS_PAGE,
+  AI_PAGE, CRON_PAGE, DB_PAGE, DOCKER_PAGE, ENV_PAGE, FTP_PAGE, WEBSTATS_PAGE,
   MONITOR_PAGE, NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
@@ -31,7 +32,7 @@ const router = createHashRouter([
     { path: "monitor", element: <ModulePage config={MONITOR_PAGE} /> },
     { path: "site", element: <ModulePage config={SITE_PAGE} /> },
     { path: "db", element: <ModulePage config={DB_PAGE} /> },
-    { path: "files", element: <ModulePage config={FILES_PAGE} /> },
+    { path: "files", element: <FilesPage /> },
     { path: "ftp", element: <ModulePage config={FTP_PAGE} /> },
     { path: "cron", element: <ModulePage config={CRON_PAGE} /> },
     { path: "env", element: <ModulePage config={ENV_PAGE} /> },
