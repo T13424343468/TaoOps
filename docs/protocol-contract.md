@@ -192,3 +192,16 @@ message LogControl {
   - `GET|PUT /api/push/whitelist`：SSRF 白名单查询/变更（PUT 整体替换，逐条进审计）。
   - `POST /api/push/test`：向指定渠道发送测试载荷，返回逐次尝试结果。
   - `GET /api/push/log`：推送日志查询。
+
+## 10. 两步验证（FR-A16）
+
+面板登录二次校验（TOTP，RFC 6238），纯中控侧（auth 模块扩展），Agent 无涉及。全程本地算法（HMAC-SHA1 手写流程），无外部依赖、不引第三方包。
+
+- **数据落点**：`<dataDir>/auth/totp/<username>.json`（文件权限 600）：`secret`（Base32 密钥）、`enabled`（绑定确认后 true）、`recovery_codes`（哈希数组，PBKDF2 同口径）、`created_ms`。密钥与恢复码哈希不进审计、不进日志、不回显（绑定/重生成时一次性展示）。
+- **绑定流程**：`POST /api/auth/totp/setup`（需登录 + 密码复验 `password` 字段）→ 生成新密钥与 Base32、otpauth URI（前端渲染二维码或展示密钥）→ 用户提交 6 位码 `POST /api/auth/totp/enable`（需密码复验）→ 校验通过后 `enabled=true` 并返回 10 枚恢复码（明文仅此一次）。
+- **登录二次校验**：`POST /api/auth/login` 密码正确且该账号已启用 TOTP → 不发 token，返回 `{totp_required: true}`（HTTP 200）；前端补 `POST /api/auth/totp/verify`（`username`、`code`——6 位 TOTP 或恢复码）→ 校验通过发正常会话。校验失败计入与密码同一失败锁定通道（连续 5 次锁定 5 分钟，走既有 AuthService 锁定口径）。
+- **时钟窗**：±1 个 30s 周期（当前周期及前后各一，共 3 个候选码任一匹配即通过）；拒绝已使用的上一周期码（防重放，记录 last_used_step）。
+- **恢复码**：10 枚，8 位 Base32 字符；仅存 PBKDF2 哈希；用后即焚（单次有效）；`POST /api/auth/totp/recovery/regenerate`（需登录 + 密码复验）重新生成 10 枚，旧码全部失效。
+- **端点**：`/api/auth/totp/setup`、`/api/auth/totp/enable`、`/api/auth/totp/verify`、`/api/auth/totp/status`（GET，是否已启用）、`/api/auth/totp/recovery/regenerate`。全部走既有 Bearer/RBAC 中间件；setup/enable/regenerate 需密码复验（防会话劫持改配置）。
+- **前端**：登录页在 `totp_required` 后展示 6 位码输入；设置页（权限与审计内新页签）提供绑定（二维码/密钥展示 + 确认码）与恢复码重生成。
+- **审计**：setup/enable/verify 成败/regenerate 均落审计（Action=login 或 totp.*，Result=ok/invalid），密钥与恢复码明文不落审计。
