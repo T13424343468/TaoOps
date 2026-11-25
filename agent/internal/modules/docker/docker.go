@@ -600,7 +600,8 @@ func Handler(m *Manager) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: out}, nil
+			// backlog D1：拉取进度结构化——层数/字节进度落 Output JSON（raw 保留原文）。
+			return registry.Result{ExitCode: 0, Output: string(PullProgressJSON(out))}, nil
 		case "image_remove":
 			ref, _ := args["ref"].(string)
 			if err := m.RemoveImage(ref); err != nil {
