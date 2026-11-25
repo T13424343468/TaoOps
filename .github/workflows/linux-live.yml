@@ -6,12 +6,17 @@
 name: linux-live
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      soak_seconds:
+        description: '关6 稳定长跑秒数（默认 600；出包前全量跑 1800）'
+        default: '600'
+        type: string
 
 jobs:
   live-fire:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -214,6 +219,96 @@ jobs:
           curl -s -o /dev/null 'http://127.0.0.1:8080/?id=2%20union%20select%20livefire'
           sleep 1
           echo "$WSPROBE_OUT" | grep -q TAOOPS_WAF && echo "L7 roundtrip: DELIVERED" || { echo "L7 roundtrip: MISSING"; echo "$WSPROBE_OUT" | tail -5; }
+
+      - name: 关5 暴力——恶意输入灌压（八道关流水线）
+        run: |
+          set -u
+          LIVE=/tmp/taoops-live
+          GATE="$LIVE/gate5-brute.log"
+          {
+            echo "== WAF 恶意载荷连发（SQLi/XSS/路径穿越变体各 20 发）=="
+            BLOCKED=0; TOTAL=0
+            for i in $(seq 1 20); do
+              for payload in "id=1%20or%201%3D1--" "q=%3Cscript%3Ealert(1)%3C/script%3E" "f=../../etc/passwd"; do
+                C=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/?$payload")
+                TOTAL=$((TOTAL+1))
+                [ "$C" != "200" ] && BLOCKED=$((BLOCKED+1))
+              done
+            done
+            echo "WAF blocked $BLOCKED / $TOTAL"
+            EVENTS=$(sudo grep -c TAOOPS_WAF /var/log/taoops-waf/events.log 2>/dev/null || echo 0)
+            echo "WAF events logged: $EVENTS"
+            [ "$BLOCKED" -gt 0 ] && [ "$EVENTS" -gt 0 ]
+            echo "== 中控 API 畸形数据灌入 =="
+            for body in '{"op":"list","x":"'"$(printf 'A%.0s' {1..5000})"'"}' 'not-json' '{"op":123}' '{"op":"list","timeoutMs":"abc"}'; do
+              curl -sk -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json'                 -d "$body" "https://127.0.0.1:5243/api/nodes/live-node-1/cron" || true
+            done
+            echo "== 灌压后存活检查 =="
+            curl -sk -o /dev/null -w 'server alive: %{http_code}\n' "https://127.0.0.1:5243/"
+            curl -s -o /dev/null -w 'waf alive: %{http_code}\n' "http://127.0.0.1:8080/"
+          } 2>&1 | tee "$GATE"
+          grep -q "server alive: 200" "$GATE" && grep -q "waf alive: 200" "$GATE"             || { echo "GATE5 FAIL: service did not survive fuzz"; exit 1; }
+          grep -q "WAF blocked" "$GATE" && echo "GATE5 PASS"
+
+      - name: 关6 稳定——持续负载长跑（八道关流水线）
+        run: |
+          set -u
+          LIVE=/tmp/taoops-live
+          GATE="$LIVE/gate6-soak.log"
+          SOAK="${{ github.event.inputs.soak_seconds || '600' }}"
+          echo "== 持续 ${SOAK}s 混合负载（正常/拦截/命令通道交替）=="
+          START=$(date +%s)
+          OK=0; FAIL=0
+          while [ $(( $(date +%s) - START )) -lt "$SOAK" ]; do
+            C=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/?id=$((RANDOM % 100))")
+            [ "$C" = "200" ] && OK=$((OK+1)) || FAIL=$((FAIL+1))
+            curl -sk -o /dev/null "https://127.0.0.1:5243/" || FAIL=$((FAIL+1))
+            sleep 1
+          done
+          {
+            echo "soak ok=$OK fail=$FAIL"
+            echo "== 长跑后资源与存活 =="
+            curl -sk -o /dev/null -w 'server alive: %{http_code}\n' "https://127.0.0.1:5243/"
+            curl -s -o /dev/null -w 'waf alive: %{http_code}\n' "http://127.0.0.1:8080/"
+            SRV_PID=$(pgrep -f "TaoOps.Server.dll" | head -1)
+            [ -n "$SRV_PID" ] && echo "server rss_kb: $(awk '/VmRSS/{print $2}' /proc/$SRV_PID/status)"
+          } 2>&1 | tee "$GATE"
+          grep -q "server alive: 200" "$GATE" && grep -q "waf alive: 200" "$GATE"             || { echo "GATE6 FAIL: service died during soak"; exit 1; }
+          echo "GATE6 PASS"
+
+      - name: 关7 健壮——进程中断恢复（八道关流水线）
+        run: |
+          set -u
+          LIVE=/tmp/taoops-live
+          GATE="$LIVE/gate7-robust.log"
+          {
+            echo "== 杀 Agent 进程，验证自动重连 =="
+            pkill -f "$LIVE/bin/agent" || true
+            sleep 2
+            TAOOPS_SERVER=127.0.0.1:5243 TAOOPS_AGENT_ID=live-node-1 \
+              TAOOPS_KNOWN_HOSTS="$LIVE/known_hosts" TAOOPS_CONF_DIR="$LIVE/conf" \
+              TAOOPS_BACKUP_DIR="$LIVE/backup" TAOOPS_SESSION_DIR="$LIVE/sessions" \
+              TAOOPS_LOG_DIR="$LIVE/logs" TAOOPS_PACKAGE_DIR="$LIVE/pkg" TAOOPS_INSTALL_DIR="$LIVE/opt" \
+              TAOOPS_AUDIT_PATH="$LIVE/audit.json" \
+              "$LIVE/bin/agent" >> "$LIVE/agent.log" 2>&1 &
+            RECOVERED=no
+            for i in $(seq 1 30); do
+              OUT=$("$LIVE/bin/dispatch" "127.0.0.1:5243" "live-node-1" "sysinfo.overview" op=summary 2>&1) || true
+              echo "$OUT" | grep -q '"exit_code":0' && { RECOVERED=yes; break; }
+              sleep 2
+            done
+            echo "agent recovered: $RECOVERED"
+            echo "== 重启 OpenResty，验证 WAF 规则仍在 =="
+            sudo /usr/local/openresty/bin/openresty -c "$LIVE/nginx.conf" -p "$LIVE/" -s stop 2>/dev/null || true
+            sleep 1
+            sudo /usr/local/openresty/bin/openresty -c "$LIVE/nginx.conf" -p "$LIVE/"
+            sleep 1
+            C=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080/?id=1%20or%201%3D1--")
+            echo "waf after restart blocked: $C"
+            [ "$C" != "200" ]
+          } 2>&1 | tee "$GATE"
+          grep -q "agent recovered: yes" "$GATE" || { echo "GATE7 FAIL: agent did not recover"; exit 1; }
+          echo "GATE7 PASS"
 
       - name: eBPF 环境探针（供 eBPF 班参考，不算断言）
         run: |
