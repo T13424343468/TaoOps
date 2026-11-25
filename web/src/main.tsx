@@ -28,11 +28,12 @@ import SitePage from "./pages/Site";
 import DbPage from "./pages/Db";
 import FtpPage from "./pages/Ftp";
 import EnvPage from "./pages/Env";
+import UpgradePage from "./pages/Upgrade";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE,
-  // DB_PAGE、FTP_PAGE、ENV_PAGE 已切真（backlog B2）
-  NODES_PAGE, UPGRADE_PAGE,
+  // DB_PAGE、FTP_PAGE、ENV_PAGE、UPGRADE_PAGE 已切真（backlog B2）
+  NODES_PAGE,
 } from "./pages/configs";
 
 const router = createHashRouter([
@@ -59,7 +60,7 @@ const router = createHashRouter([
     { path: "audit", element: <AuditPage /> },
     { path: "totp", element: <TotpPage /> },
     { path: "ai", element: <ModulePage config={AI_PAGE} /> },
-    { path: "upgrade", element: <ModulePage config={UPGRADE_PAGE} /> },
+    { path: "upgrade", element: <UpgradePage /> },
     { path: "push", element: <PushPage /> },
     { path: "logclean", element: <LogCleanPage /> },
     { path: "db-replica", element: <DbReplicaPage /> },
