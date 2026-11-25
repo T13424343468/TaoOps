@@ -456,6 +456,24 @@ app.MapPost("/api/nodes/{id}/cron", async (string id, CronOpRequest req, HttpCon
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// 网站专用端点（backlog B2 切真）：按操作分级鉴权（SitePolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/site", async (string id, SiteOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !SitePolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for site op" }, statusCode: 403);
+    }
+    var args = SiteOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "site.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 // FR-A14 一键迁移专用端点：按操作分级鉴权（MigratePolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/migrate", async (string id, MigrateOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
@@ -817,6 +835,9 @@ public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, s
 // ---- 计划任务下发请求（backlog B2 切真）----
 public sealed record CronOpRequest(string? Op, string? Name, string? Schedule, string? Command, int TimeoutMs);
 
+// ---- 网站下发请求（backlog B2 切真）----
+public sealed record SiteOpRequest(string? Op, string? Name, string? Domains, string? Proxy, int? Port, int TimeoutMs);
+
 // ---- FR-A14 一键迁移下发请求 ----
 public sealed record MigrateOpRequest(string? Op, string? SourcePath, string? TargetPath, string? Name,
     string? File, string? Mapping, string? SourceVersion, bool? Confirm, bool? Force, int TimeoutMs);
@@ -893,6 +914,20 @@ internal static class CronOpArgs
         if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
         if (!string.IsNullOrEmpty(req.Schedule)) args.Add($"schedule={req.Schedule}");
         if (!string.IsNullOrEmpty(req.Command)) args.Add($"command={req.Command}");
+        return args;
+    }
+}
+
+internal static class SiteOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(SiteOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
+        if (!string.IsNullOrEmpty(req.Domains)) args.Add($"domains={req.Domains}");
+        if (!string.IsNullOrEmpty(req.Proxy)) args.Add($"proxy={req.Proxy}");
+        if (req.Port is int port) args.Add($"port={port}");
         return args;
     }
 }

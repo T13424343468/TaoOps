@@ -24,10 +24,12 @@ import K8sPage from "./pages/K8s";
 import DockerPage from "./pages/Docker";
 import WebstatsPage from "./pages/Webstats";
 import CronPage from "./pages/Cron";
+import SitePage from "./pages/Site";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE,
-  NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
+  // SITE_PAGE 已切真（backlog B2）
+  NODES_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
 const router = createHashRouter([
@@ -36,7 +38,7 @@ const router = createHashRouter([
     { path: "nodes", element: <ModulePage config={NODES_PAGE} /> },
     { path: "term", element: <TermPage /> },
     { path: "monitor", element: <MetricsPage /> },
-    { path: "site", element: <ModulePage config={SITE_PAGE} /> },
+    { path: "site", element: <SitePage /> },
     { path: "db", element: <ModulePage config={DB_PAGE} /> },
     { path: "files", element: <FilesPage /> },
     { path: "ftp", element: <ModulePage config={FTP_PAGE} /> },

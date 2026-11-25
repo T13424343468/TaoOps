@@ -15,6 +15,7 @@ import K8sPage from "./pages/K8s";
 import DockerPage from "./pages/Docker";
 import WebstatsPage from "./pages/Webstats";
 import CronPage from "./pages/Cron";
+import SitePage from "./pages/Site";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
@@ -60,6 +61,7 @@ beforeAll(() => {
       registries: ["registry.example.com:5000"],
     }) });
     if (u.includes("/cron")) return json({ exit_code: 0, output: JSON.stringify({ jobs: [{ name: "nightly-backup", schedule: "0 2 * * *", command: "/usr/local/bin/backup.sh --full" }] }) });
+    if (u.includes("/site")) return json({ exit_code: 0, output: JSON.stringify({ sites: [{ name: "my-site", config: "server { listen 80; }", server_name: "example.com", proxy_pass: "http://127.0.0.1:3000" }] }) });
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -189,6 +191,12 @@ describe("23 页全覆盖冒烟", () => {
     expect(screen.getByText("私有仓库")).toBeTruthy();
     expect(screen.getByText("https://docker.m.daocloud.io")).toBeTruthy();
     expect(screen.getByText("registry.example.com:5000")).toBeTruthy();
+  });
+
+  it("网站页：站点列表真连（site 端点）", async () => {
+    renderAt(<SitePage />);
+    await waitFor(() => expect(screen.getAllByText("my-site").length).toBeGreaterThan(0));
+    expect(screen.getByText("example.com")).toBeTruthy();
   });
 
   it("计划任务页：任务列表真连（cron 端点）", async () => {
