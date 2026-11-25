@@ -160,11 +160,12 @@ func (m *Manager) opList(args map[string]any) (registry.Result, error) {
 		}
 		groups = append(groups, *g)
 	}
-	out, _ := json.Marshal(groups)
+	out, _ := json.Marshal(map[string]any{"groups": groups})
 	if groups == nil {
-		out = []byte("[]")
+		out = []byte(`{"groups":[]}`)
 	}
-	return registry.Result{ExitCode: 0, Output: fmt.Sprintf("%d upstream group(s)", len(groups)), Data: map[string]any{"groups": json.RawMessage(out)}}, nil
+	// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+	return registry.Result{ExitCode: 0, Output: string(out), Data: map[string]any{"groups": json.RawMessage(out)}}, nil
 }
 
 func (m *Manager) opAdd(args map[string]any) (registry.Result, error) {
@@ -334,11 +335,12 @@ func (m *Manager) opHealth(args map[string]any) (registry.Result, error) {
 			}
 		}
 	}
-	out, _ := json.Marshal(rows)
+	out, _ := json.Marshal(map[string]any{"health": rows})
 	if rows == nil {
-		out = []byte("[]")
+		out = []byte(`{"health":[]}`)
 	}
-	return registry.Result{ExitCode: 0, Output: fmt.Sprintf("health checked %d backend(s)", len(rows)), Data: map[string]any{"health": json.RawMessage(out)}}, nil
+	// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+	return registry.Result{ExitCode: 0, Output: string(out), Data: map[string]any{"health": json.RawMessage(out)}}, nil
 }
 
 func (m *Manager) probe(b *Backend) bool {
