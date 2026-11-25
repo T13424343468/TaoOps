@@ -510,3 +510,34 @@ func TestHandler_RegistryAndMirrorOps(t *testing.T) {
 		t.Fatalf("unknown op should exit 2: %v", r)
 	}
 }
+
+func TestHandlerListOutputJSON(t *testing.T) {
+	m, _ := newMgr(t, false)
+	h := Handler(m)
+	res, err := h(map[string]any{"op": "list"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("list: %v %v", res, err)
+	}
+	var parsed struct {
+		Containers []map[string]any `json:"containers"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("list output must be JSON object, got %q: %v", res.Output, err)
+	}
+	if len(parsed.Containers) != 1 || parsed.Containers[0]["names"] == nil && parsed.Containers[0]["Names"] == nil {
+		t.Fatalf("list output containers mismatch: %v", parsed.Containers)
+	}
+	res, err = h(map[string]any{"op": "image_list"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("image_list: %v %v", res, err)
+	}
+	var parsedImgs struct {
+		Images []map[string]any `json:"images"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsedImgs); err != nil {
+		t.Fatalf("image_list output must be JSON object, got %q: %v", res.Output, err)
+	}
+	if len(parsedImgs.Images) != 1 {
+		t.Fatalf("image_list output images mismatch: %v", parsedImgs.Images)
+	}
+}
