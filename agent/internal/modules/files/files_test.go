@@ -1,6 +1,7 @@
 package files
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -277,5 +278,27 @@ func TestHandlerFileEditOps(t *testing.T) {
 	}
 	if _, err := h(map[string]any{"op": "file_read", "path": "nope"}); err == nil {
 		t.Fatal("relative path should fail")
+	}
+}
+
+func TestHandlerListOutputJSON(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := NewAssembler(filepath.Join(root, "s"))
+	h := Handler(a)
+	res, err := h(map[string]any{"op": "list", "dir": root})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("list: %v %v", res, err)
+	}
+	var parsed struct {
+		Entries []map[string]any `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("list output must be JSON object, got %q: %v", res.Output, err)
+	}
+	if len(parsed.Entries) != 1 || parsed.Entries[0]["name"] != "a.txt" {
+		t.Fatalf("list output entries mismatch: %v", parsed.Entries)
 	}
 }
