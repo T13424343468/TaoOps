@@ -5,6 +5,7 @@
 package site
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -212,13 +213,17 @@ func Handler(m *Manager) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			res = registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"sites": sites}}
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			raw, _ := json.Marshal(map[string]any{"sites": sites})
+			res = registry.Result{ExitCode: 0, Output: string(raw), Data: map[string]any{"sites": sites}}
 		case "backups":
 			files, err := m.ListBackups(name)
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			res = registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"backups": files}}
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			rawB, _ := json.Marshal(map[string]any{"backups": files})
+			res = registry.Result{ExitCode: 0, Output: string(rawB), Data: map[string]any{"backups": files}}
 		default:
 			return registry.Result{ExitCode: 2}, fmt.Errorf("site: unknown op %q", op)
 		}
