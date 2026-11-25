@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Button, Card, DatePicker, Form, Input, Popconfirm, Select, Space, Table, Tag, Typography, message } from "antd";
 import { api } from "../api/client";
+import TrendChart from "../components/TrendChart";
 
 // 网站统计页（真连 POST /api/nodes/{id}/webstats，契约 FR-A12）。
 // 解析访问日志（断点续读）、按日汇总 PV/UV/状态码/流量/Top、导出 JSON、清空。
@@ -178,6 +179,11 @@ export default function WebstatsPage() {
       </Card>
 
       <Card size="small" title="按日汇总" style={{ marginBottom: 12 }}>
+        {rows.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <TrendChart points={rows.map((r) => ({ date: r.date, pv: r.pv, uv: r.uv }))} />
+          </div>
+        )}
         <Table
           rowKey={(r: DayRow) => r.site + r.date}
           size="small"
