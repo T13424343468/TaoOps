@@ -438,6 +438,24 @@ app.MapPost("/api/nodes/{id}/webstats", async (string id, WebStatsOpRequest req,
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// 计划任务专用端点（backlog B2 切真）：按操作分级鉴权（CronPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/cron", async (string id, CronOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !CronPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for cron op" }, statusCode: 403);
+    }
+    var args = CronOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "cron.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 // FR-A14 一键迁移专用端点：按操作分级鉴权（MigratePolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/migrate", async (string id, MigrateOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
@@ -796,6 +814,9 @@ public sealed record DockerOpRequest(string? Op, string? Name, string? Ref, stri
 // ---- FR-A12 网站统计下发请求 ----
 public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, string? From, string? To, int TimeoutMs);
 
+// ---- 计划任务下发请求（backlog B2 切真）----
+public sealed record CronOpRequest(string? Op, string? Name, string? Schedule, string? Command, int TimeoutMs);
+
 // ---- FR-A14 一键迁移下发请求 ----
 public sealed record MigrateOpRequest(string? Op, string? SourcePath, string? TargetPath, string? Name,
     string? File, string? Mapping, string? SourceVersion, bool? Confirm, bool? Force, int TimeoutMs);
@@ -859,6 +880,19 @@ internal static class WebStatsOpArgs
         if (!string.IsNullOrEmpty(req.Path)) args.Add($"path={req.Path}");
         if (!string.IsNullOrEmpty(req.From)) args.Add($"from={req.From}");
         if (!string.IsNullOrEmpty(req.To)) args.Add($"to={req.To}");
+        return args;
+    }
+}
+
+internal static class CronOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(CronOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
+        if (!string.IsNullOrEmpty(req.Schedule)) args.Add($"schedule={req.Schedule}");
+        if (!string.IsNullOrEmpty(req.Command)) args.Add($"command={req.Command}");
         return args;
     }
 }

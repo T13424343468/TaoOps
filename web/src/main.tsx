@@ -23,9 +23,10 @@ import AppDeployPage from "./pages/AppDeploy";
 import K8sPage from "./pages/K8s";
 import DockerPage from "./pages/Docker";
 import WebstatsPage from "./pages/Webstats";
+import CronPage from "./pages/Cron";
 import ModulePage from "./pages/ModulePage";
 import {
-  AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE,
+  AI_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE,
   NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
@@ -39,7 +40,7 @@ const router = createHashRouter([
     { path: "db", element: <ModulePage config={DB_PAGE} /> },
     { path: "files", element: <FilesPage /> },
     { path: "ftp", element: <ModulePage config={FTP_PAGE} /> },
-    { path: "cron", element: <ModulePage config={CRON_PAGE} /> },
+    { path: "cron", element: <CronPage /> },
     { path: "env", element: <ModulePage config={ENV_PAGE} /> },
     { path: "docker", element: <DockerPage /> },
     { path: "apps", element: <AppDeployPage /> },

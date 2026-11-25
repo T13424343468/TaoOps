@@ -14,6 +14,7 @@ import AppDeployPage from "./pages/AppDeploy";
 import K8sPage from "./pages/K8s";
 import DockerPage from "./pages/Docker";
 import WebstatsPage from "./pages/Webstats";
+import CronPage from "./pages/Cron";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
@@ -58,6 +59,7 @@ beforeAll(() => {
       mirrors: ["https://docker.m.daocloud.io"],
       registries: ["registry.example.com:5000"],
     }) });
+    if (u.includes("/cron")) return json({ exit_code: 0, output: JSON.stringify({ jobs: [{ name: "nightly-backup", schedule: "0 2 * * *", command: "/usr/local/bin/backup.sh --full" }] }) });
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -187,6 +189,12 @@ describe("23 页全覆盖冒烟", () => {
     expect(screen.getByText("私有仓库")).toBeTruthy();
     expect(screen.getByText("https://docker.m.daocloud.io")).toBeTruthy();
     expect(screen.getByText("registry.example.com:5000")).toBeTruthy();
+  });
+
+  it("计划任务页：任务列表真连（cron 端点）", async () => {
+    renderAt(<CronPage />);
+    await waitFor(() => expect(screen.getAllByText("nightly-backup").length).toBeGreaterThan(0));
+    expect(screen.getByText("0 2 * * *")).toBeTruthy();
   });
 
   it("网站统计页：解析与按日汇总（真连 webstats 端点）", async () => {
