@@ -444,12 +444,12 @@ func TestRegistryLogin_InvalidInputs_Rejected(t *testing.T) {
 }
 
 func TestRegistryLogin_AuditWithoutPassword(t *testing.T) {
-	m, _, dir := newMgrCfg(t, false)
+	m, _, _ := newMgrCfg(t, false)
 	m.Run = func(bin string, args []string, stdin string) (string, string, error) { return "", "", nil }
 	if err := m.RegistryLogin("reg.example.com", "ops-user", "s3cret-pw"); err != nil {
 		t.Fatalf("RegistryLogin: %v", err)
 	}
-	b, _ := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+	b, _ := os.ReadFile(m.AuditPath)
 	if strings.Contains(string(b), "s3cret-pw") {
 		t.Fatalf("audit leaked password: %s", b)
 	}

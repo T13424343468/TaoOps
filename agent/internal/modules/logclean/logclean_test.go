@@ -115,11 +115,11 @@ func TestRunCleansArchivesAndLogs(t *testing.T) {
 	_ = Register(reg, m)
 	handler, _ := reg.Get("logclean.manage")
 
-	logDir := "/var/log/app"
+	logDir := filepath.Join(t.TempDir(), "app")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll("/var/log/app") })
+	t.Cleanup(func() { _ = os.RemoveAll(logDir) })
 	old := time.Now().Add(-10 * 24 * time.Hour)
 	p := filepath.Join(logDir, "old.log")
 	if err := os.WriteFile(p, []byte(strings.Repeat("x", 4096)), 0o644); err != nil {
@@ -172,12 +172,13 @@ func TestRunSkipsWhitelistedFilesViaSymlink(t *testing.T) {
 	_ = Register(reg, m)
 	handler, _ := reg.Get("logclean.manage")
 
-	logDir := "/var/log/app-symtest"
+	base := t.TempDir()
+	logDir := filepath.Join(base, "app-symtest")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(logDir) })
-	etcFile := "/etc/logclean-symtest-target"
+	etcFile := filepath.Join(base, "symtest-target")
 	if err := os.WriteFile(etcFile, []byte("keep"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +207,7 @@ func TestRunSizeThreshold(t *testing.T) {
 	_ = Register(reg, m)
 	handler, _ := reg.Get("logclean.manage")
 
-	logDir := "/var/log/app-size"
+	logDir := filepath.Join(t.TempDir(), "app-size")
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
