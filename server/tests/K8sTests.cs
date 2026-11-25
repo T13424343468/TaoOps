@@ -13,7 +13,7 @@ public class K8sPolicyTests
     [Theory]
     [InlineData("clusters"), InlineData("nodes"), InlineData("workloads"), InlineData("pods")]
     [InlineData("events"), InlineData("logs"), InlineData("version"), InlineData("rollout_status")]
-    [InlineData("templates")]
+    [InlineData("templates"), InlineData("metrics")]
     public void ViewOps_ReadOnlySufficient(string op)
     {
         Assert.Equal(UserRole.ReadOnly, K8sPolicy.RequiredRole(op));
@@ -347,6 +347,53 @@ public class K8sEndpointTests
         await AsAdmin();
         var res = await _client.GetAsync("/api/k8s/nope/nodes");
         Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
+    }
+
+    // backlog C1：Pod 资源用量解析（纯函数直测）。
+    [Fact]
+    public void ParsePodMetrics_AggregatesContainers()
+    {
+        var raw = System.Text.Json.JsonSerializer.Deserialize<object>("""
+            {
+              "kind": "PodMetricsList",
+              "items": [
+                {
+                  "metadata": { "name": "web-1", "namespace": "default" },
+                  "containers": [
+                    { "name": "app", "usage": { "cpu": "250m", "memory": "512Mi" } },
+                    { "name": "sidecar", "usage": { "cpu": "50u", "memory": "1Gi" } }
+                  ]
+                }
+              ]
+            }
+            """)!;
+        var r = K8sClusterService.ParsePodMetrics(raw);
+        Assert.True(r.Available);
+        var pod = Assert.Single(r.Pods);
+        Assert.Equal("web-1", pod.Name);
+        Assert.Equal("default", pod.Namespace);
+        Assert.Equal(251, pod.CpuMilli); // 250m + 50u(≈0.05m 向上取整 1m)
+        Assert.Equal(1536, pod.MemMiB);  // 512Mi + 1Gi
+        Assert.Equal(2, pod.Containers.Count);
+    }
+
+    [Fact]
+    public void ParsePodMetrics_EmptyItems_Available()
+    {
+        var raw = System.Text.Json.JsonSerializer.Deserialize<object>("""{"items": []}""")!;
+        var r = K8sClusterService.ParsePodMetrics(raw);
+        Assert.True(r.Available);
+        Assert.Empty(r.Pods);
+    }
+
+    // backlog C2：集群健康端点（无集群时空列表）。
+    [Fact]
+    public async Task K8sHealth_NoClusters_EmptyList()
+    {
+        await AsAdmin();
+        var res = await _client.GetAsync("/api/k8s/health");
+        res.EnsureSuccessStatusCode();
+        Assert.Equal("[]", await res.Content.ReadAsStringAsync());
     }
 
     [Fact]

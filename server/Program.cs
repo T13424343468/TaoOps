@@ -581,6 +581,24 @@ app.MapGet("/api/k8s/{cluster}/pods", (string cluster, HttpContext http, K8sClus
     catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
     catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
 });
+// 集群健康总览（backlog C2）：全部集群节点/Pod 汇总，单集群巡检失败降级为 Error。
+app.MapGet("/api/k8s/health", (HttpContext http, K8sClusterService svc) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("nodes", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    return Results.Json(svc.Health());
+});
+// Pod 资源用量（backlog C1）：metrics.k8s.io 自定义 API，未装 metrics-server 时降级说明。
+app.MapGet("/api/k8s/{cluster}/metrics", async (string cluster, HttpContext http, K8sClusterService svc) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("metrics", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    try { return Results.Json(await svc.PodMetricsAsync(cluster)); }
+    catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
+    catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
+});
 app.MapGet("/api/k8s/{cluster}/events", (string cluster, HttpContext http, K8sClusterService svc, string? ns) =>
 {
     var roleStr = http.Items["taoops.role"]?.ToString() ?? "";

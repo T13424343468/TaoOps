@@ -1,4 +1,5 @@
 using k8s;
+using System.Text.Json;
 using k8s.KubeConfigModels;
 using k8s.Models;
 
@@ -124,6 +125,114 @@ public sealed class K8sClusterService(KubeClusterStore store, IK8sClientFactory 
                 p.Spec?.NodeName ?? "", p.Status?.Phase ?? "Unknown", restarts, ready,
                 AgeMs(p.Metadata.CreationTimestamp), waiting);
         }).ToList();
+    }
+
+    /// <summary>Pod 资源用量（backlog C1）：metrics.k8s.io 自定义 API，未装 metrics-server 时降级。</summary>
+    public sealed record ContainerMetric(string Name, long CpuMilli, double MemMiB);
+    public sealed record PodMetricSummary(string Namespace, string Name, string Node,
+        long CpuMilli, double MemMiB, IReadOnlyList<ContainerMetric> Containers);
+    public sealed record PodMetricsResult(bool Available, string? Note, IReadOnlyList<PodMetricSummary> Pods);
+
+    /// <summary>
+    /// Pod/容器级 CPU（毫核）与内存（MiB）用量：走 metrics.k8s.io/v1beta1 自定义 API
+    /// （metrics-server 提供）。集群未装 metrics-server 时 Available=false 并附说明，
+    /// 降级不报错（口径同巡检降级）。
+    /// </summary>
+    public async Task<PodMetricsResult> PodMetricsAsync(string cluster)
+    {
+        using var client = Client(cluster);
+        object raw;
+        try
+        {
+            raw = await client.CustomObjects.ListClusterCustomObjectAsync("metrics.k8s.io", "v1beta1", "pods");
+        }
+        catch (Exception ex) when (ex.Message.Contains("404") || ex.Message.Contains("NotFound")
+            || ex.Message.Contains("the server could not find") || ex.Message.Contains("no such host"))
+        {
+            return new PodMetricsResult(false, "集群未安装 metrics-server 或指标 API 不可用，无法展示实时用量", Array.Empty<PodMetricSummary>());
+        }
+        return ParsePodMetrics(raw);
+    }
+
+    /// <summary>解析 PodMetricsList JSON（纯函数，测试直测）：cpu 毫核、内存 MiB，逐容器聚合。</summary>
+    public static PodMetricsResult ParsePodMetrics(object raw)
+    {
+        static long CpuMilli(string? q)
+        {
+            if (string.IsNullOrEmpty(q)) return 0;
+            if (q.EndsWith("m")) return long.TryParse(q[..^1], out var m) ? m : 0;
+            if (q.EndsWith("u")) return long.TryParse(q[..^1], out var u) ? (long)Math.Ceiling(u / 1000.0) : 0;
+            if (q.EndsWith("n")) return long.TryParse(q[..^1], out var n) ? (long)Math.Ceiling(n / 1_000_000.0) : 0;
+            return double.TryParse(q, out var whole) ? (long)Math.Ceiling(whole * 1000) : 0;
+        }
+        static double MemMiB(string? q)
+        {
+            if (string.IsNullOrEmpty(q)) return 0;
+            // Kubernetes 内存用量恒为二进制单位（Ki/Mi/Gi/Ti），十进制后缀视为异常按二进制折算。
+            var num = q.EndsWith("i") ? q[..^2] : q;
+            if (!double.TryParse(num, out var v)) return 0;
+            return q.EndsWith("Ki") ? v / 1024 : q.EndsWith("Gi") ? v * 1024
+                : q.EndsWith("Ti") ? v * 1024 * 1024 : v;
+        }
+
+        using var doc = JsonDocument.Parse(JsonSerializer.Serialize(raw));
+        var root = doc.RootElement;
+        if (!root.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+            return new PodMetricsResult(true, null, Array.Empty<PodMetricSummary>());
+
+        var pods = new List<PodMetricSummary>();
+        foreach (var item in items.EnumerateArray())
+        {
+            var name = item.TryGetProperty("metadata", out var meta) && meta.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+            var ns = item.TryGetProperty("metadata", out var m2) && m2.TryGetProperty("namespace", out var nsEl) ? nsEl.GetString() ?? "" : "";
+            var containers = new List<ContainerMetric>();
+            if (item.TryGetProperty("containers", out var cs) && cs.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var c in cs.EnumerateArray())
+                {
+                    var cname = c.TryGetProperty("name", out var cn) ? cn.GetString() ?? "" : "";
+                    string? cpu = null, mem = null;
+                    if (c.TryGetProperty("usage", out var usage))
+                    {
+                        cpu = usage.TryGetProperty("cpu", out var cu) ? cu.GetString() : null;
+                        mem = usage.TryGetProperty("memory", out var mu) ? mu.GetString() : null;
+                    }
+                    containers.Add(new ContainerMetric(cname, CpuMilli(cpu), Math.Round(MemMiB(mem), 1)));
+                }
+            }
+            pods.Add(new PodMetricSummary(ns, name, "", containers.Sum(c => c.CpuMilli),
+                Math.Round(containers.Sum(c => c.MemMiB), 1), containers));
+        }
+        return new PodMetricsResult(true, null, pods);
+    }
+
+    /// <summary>集群健康总览（backlog C2）：每集群节点/Pod 汇总，巡检失败降级为 Error 说明。</summary>
+    public sealed record ClusterHealth(string Cluster, string Version, int NodesTotal, int NodesNotReady,
+        int PodsTotal, IReadOnlyList<string> UnhealthyPods, string? Error);
+
+    /// <summary>全部集群健康快照：判定口径与 K8sMonitor.FindUnhealthy 一致（BackOff 类原因或重启激增）。</summary>
+    public IReadOnlyList<ClusterHealth> Health()
+    {
+        var result = new List<ClusterHealth>();
+        foreach (var meta in store.List())
+        {
+            try
+            {
+                var nodes = ListNodes(meta.Name);
+                var pods = ListPods(meta.Name, "");
+                var unhealthy = pods
+                    .Where(p => p.Reason is not null || p.Restarts >= K8sMonitor.RestartSpikeThreshold)
+                    .Select(p => $"{p.Namespace}/{p.Name}")
+                    .ToList();
+                result.Add(new ClusterHealth(meta.Name, meta.Version, nodes.Count,
+                    nodes.Count(n => n.Status != "Ready"), pods.Count, unhealthy, null));
+            }
+            catch (Exception ex)
+            {
+                result.Add(new ClusterHealth(meta.Name, meta.Version, 0, 0, 0, Array.Empty<string>(), ex.Message));
+            }
+        }
+        return result;
     }
 
     public IReadOnlyList<EventSummary> ListEvents(string cluster, string ns)

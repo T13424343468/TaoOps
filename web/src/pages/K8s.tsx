@@ -60,6 +60,27 @@ interface K8sTemplate {
   kind: string;
 }
 
+// backlog C1：Pod/容器级资源用量（metrics.k8s.io，未装 metrics-server 时降级）。
+interface ContainerMetric {
+  name: string;
+  cpu_milli: number;
+  mem_mib: number;
+}
+
+interface PodMetricRow {
+  namespace: string;
+  name: string;
+  cpu_milli: number;
+  mem_mib: number;
+  containers: ContainerMetric[];
+}
+
+interface PodMetricsResult {
+  available: boolean;
+  note: string | null;
+  pods: PodMetricRow[];
+}
+
 interface RolloutInfo {
   name: string;
   desired: number;
@@ -86,6 +107,7 @@ export default function K8sPage() {
   const [pods, setPods] = useState<PodSummary[]>([]);
   const [events, setEvents] = useState<EventSummary[]>([]);
   const [templates, setTemplates] = useState<K8sTemplate[]>([]);
+  const [podMetrics, setPodMetrics] = useState<PodMetricsResult | null>(null);
   const [logText, setLogText] = useState<string>("");
   const [rollout, setRollout] = useState<RolloutInfo | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -120,6 +142,10 @@ export default function K8sPage() {
       setPods(p);
       setEvents(ev);
       setTemplates(t);
+      // 资源用量独立降级：metrics-server 未装不阻塞主视图。
+      api<PodMetricsResult>(`/api/k8s/${cluster}/metrics`)
+        .then(setPodMetrics)
+        .catch(() => setPodMetrics(null));
     } catch (e) {
       msg.error(`集群数据加载失败：${(e as Error).message}`);
     }
@@ -365,6 +391,33 @@ export default function K8sPage() {
                     { title: "异常", dataIndex: "reason", render: (r: string | null) => r ? <Tag color="red">{r}</Tag> : "-" },
                     { title: "年龄", render: (_, p: PodSummary) => age(p.ageMs) },
                     { title: "操作", render: (_, p: PodSummary) => <Button size="small" onClick={() => viewLogs(p)}>日志</Button> },
+                  ]} />
+              ),
+            },
+            {
+              key: "metrics", label: "资源用量",
+              children: podMetrics === null ? (
+                <Alert type="info" showIcon message="资源用量不可用" description="指标数据加载失败或集群不可达。" />
+              ) : !podMetrics.available ? (
+                <Alert type="info" showIcon message="资源用量不可用" description={podMetrics.note ?? "集群未安装 metrics-server。"} />
+              ) : (
+                <Table rowKey={(r) => `${r.namespace}/${r.name}`} size="small" pagination={{ pageSize: 10 }}
+                  dataSource={podMetrics.pods}
+                  columns={[
+                    { title: "命名空间", dataIndex: "namespace" },
+                    { title: "Pod", dataIndex: "name" },
+                    { title: "CPU（毫核）", dataIndex: "cpu_milli", render: (v: number) => v.toLocaleString() },
+                    { title: "内存（MiB）", dataIndex: "mem_mib", render: (v: number) => v.toLocaleString() },
+                    {
+                      title: "容器明细",
+                      render: (_, r: PodMetricRow) => (
+                        <Space size={4} wrap>
+                          {r.containers.map((c) => (
+                            <Tag key={c.name}>{c.name}: {c.cpu_milli}m / {c.mem_mib}Mi</Tag>
+                          ))}
+                        </Space>
+                      ),
+                    },
                   ]} />
               ),
             },
