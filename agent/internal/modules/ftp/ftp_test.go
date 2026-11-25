@@ -2,6 +2,7 @@
 package ftp
 
 import (
+	"encoding/json"
 	"errors"
 	"net"
 	"path/filepath"
@@ -128,5 +129,25 @@ func TestHandlerDispatch(t *testing.T) {
 	}
 	if res, err := h(map[string]any{"op": "nonsense"}); err == nil || res.ExitCode != 2 {
 		t.Fatalf("unknown op must exit 2: %v %v", res, err)
+	}
+}
+
+// 下发桥仅回传 Output：list 结构化结果须落 Output JSON（FR-A17 约定）。
+func TestHandlerListOutputJSON(t *testing.T) {
+	m := newManager(t)
+	h := Handler(m)
+	if _, err := h(map[string]any{"op": "adduser", "user": "web", "password": "pw", "root": "/srv/web"}); err != nil {
+		t.Fatalf("adduser: %v", err)
+	}
+	res, err := h(map[string]any{"op": "list"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("list: %v %v", res, err)
+	}
+	var parsed []map[string]any
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("list output must be JSON array, got %q: %v", res.Output, err)
+	}
+	if len(parsed) != 1 || parsed[0]["name"] != "web" {
+		t.Fatalf("list output users mismatch: %v", parsed)
 	}
 }

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -148,5 +149,28 @@ func TestHandlerOps(t *testing.T) {
 	}
 	if _, err := h(map[string]any{"op": "drop", "engine": "mysql", "name": "x"}); err != nil {
 		t.Fatalf("drop: %v", err)
+	}
+}
+
+// 下发桥仅回传 Output：backups 结构化结果须落 Output JSON（FR-A17 约定）。
+func TestHandlerBackupsOutputJSON(t *testing.T) {
+	m, _ := newMgr(t, "")
+	h := Handler(m)
+	if _, err := h(map[string]any{"op": "create", "engine": "mysql", "name": "x"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := h(map[string]any{"op": "backup", "engine": "mysql", "name": "x"}); err != nil {
+		t.Fatalf("backup: %v", err)
+	}
+	res, err := h(map[string]any{"op": "backups", "engine": "mysql"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("backups: %v %v", res, err)
+	}
+	var parsed []string
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("backups output must be JSON array, got %q: %v", res.Output, err)
+	}
+	if len(parsed) != 1 {
+		t.Fatalf("backups output mismatch: %v", parsed)
 	}
 }
