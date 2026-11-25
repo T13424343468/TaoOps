@@ -6,6 +6,7 @@ package cron
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -261,7 +262,9 @@ func Handler(m *Manager) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"jobs": jobs}}, nil
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			raw, _ := json.Marshal(map[string]any{"jobs": jobs})
+			return registry.Result{ExitCode: 0, Output: string(raw), Data: map[string]any{"jobs": jobs}}, nil
 		case "add":
 			schedule, _ := args["schedule"].(string)
 			command, _ := args["command"].(string)
@@ -286,7 +289,9 @@ func Handler(m *Manager) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"logs": files}}, nil
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			raw, _ := json.Marshal(map[string]any{"logs": files})
+			return registry.Result{ExitCode: 0, Output: string(raw), Data: map[string]any{"logs": files}}, nil
 		}
 		return registry.Result{ExitCode: 2}, fmt.Errorf("cron: unknown op %q", op)
 	}
