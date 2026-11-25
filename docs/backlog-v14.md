@@ -25,29 +25,28 @@ webstats、ai、upgrade（docker 已切真）。
 
 ## C. 体验优化三件
 
-- C1 K8s 页接资源监控：Pod/容器级 CPU 内存用量（复用 FR-A23 采样底座）。
-- C2 首页集群健康总览：K8s 集群异常状态进 Dash 一眼可见。
-- C3 接入集群先试连：保存 kubeconfig 前当场验证连通性，填错立刻知道。
+- C1 ✅ K8s 页接资源监控：Pod/容器级 CPU 内存用量（metrics.k8s.io CustomObjects，未装 metrics-server 降级 Available=false+note；提交 8795e60）。
+- C2 ✅ 首页集群健康总览：GET /api/k8s/health + Dash「K8s 集群健康」卡片（单集群失败降级 Error；提交 8795e60）。
+- C3 ✅ 接入集群先试连：核实已有——TestVersion 先测后存 + connect_failed 审计测试在账（K8sTests.cs:340；提交 8795e60 注明）。
 
 ## D. 小尾巴两件
 
-- D1 Docker 拉取进度结构化（层数/字节进度接口，替代原始日志输出）。
-- D2 网站统计趋势图组件。
+- D1 ✅ Docker 拉取进度结构化：ParsePullProgress 按层去重保留最终状态，PullProgressJSON 落 Output，Docker.tsx 进度表（兼容旧版降级；提交 4d2c7bb）。
+- D2 ✅ 网站统计趋势图组件：TrendChart.tsx（echarts SVG 折线 PV/UV）+ Webstats.tsx 接入（提交 100f07d）。
 
 ## E. 收尾账
 
-- E1 云端实弹回归（等 Actions 额度恢复重跑 ci/cloud-linux）。
+- E1 ✅ 云端实弹回归：run 45590430282 全绿 18 步（node_id 错配修复后，关5/关6/关7 实弹证据在案；提交 3a2af5f）。
 - E2 四张对账表（原型样式/界面布局/功能流程视觉/界面自动化）。
 - E3 断言实效账 69 条复查。
 - E4 出包日：按老板令「不急」另定。
 
 ## F. 面板自身补全（2026-11-25 二次盘点补充）
 
-- F1 用户管理页：后端 /api/auth/users（列表/创建/删除）已有，前端无入口——补页面 + 导航。
-- F2 修改自己密码：未见 change-password 端点，核对后补齐（含旧密码校验）。
-- F3 防火墙/防篡改前端入口：fw、tamperguard Agent 模块已有，无下发桥端点、无前端页；
-  先核对模块能力再决定补页面或并入安全页。
-- F4 系统设置页：告警阈值等目前只能改环境变量，补可视化设置页（落盘或 env 生成）。
+- F1 ✅ 用户管理页：Users.tsx 真连 /api/auth/users + 路由/导航接线（提交 ddcf791）。
+- F2 ✅ 修改自己密码：POST /api/auth/change-password（旧密码校验+新密码≥8 位+审计）+ UpdatePasswordHash + 顶栏改密码弹窗，端点集成测试 4 例（提交 5959c5b/ddcf791）。
+- F3 ✅ 防火墙/防篡改前端入口：/api/nodes/{id}/fw 与 /tamperguard 端点（FwPolicy/TamperGuardPolicy 分级鉴权）+ Fw.tsx 页（audit/allow/deny/remove/rollback+status，Output JSON），矩阵测试+Go Output 断言（提交 45d68ca/47af528）。
+- F4 ✅ 系统设置页：SettingsStore（settings.json 原子写盘，损坏回退默认）+ AlertCenter 实例阈值热重载 + GET/PUT /api/settings/alerts（PUT Admin only）+ Settings.tsx 表单页（提交 5959c5b/9345194）。
 
 ## 执行顺序
 
