@@ -12,9 +12,11 @@ public static class DockerPolicy
     /// <summary>操作 → 最低角色。未知操作默认 Admin（默认拒绝）。</summary>
     public static UserRole RequiredRole(string op) => op switch
     {
-        "list" or "logs" or "image_list" => UserRole.ReadOnly,
+        "list" or "logs" or "image_list" or "mirror_list" or "registry_list" => UserRole.ReadOnly,
         "start" or "stop" or "restart" or "image_pull" => UserRole.Operator,
-        "terminal" or "image_remove" => UserRole.Admin,
+        "terminal" or "image_remove"
+            or "mirror_add" or "mirror_remove" or "daemon_restart"
+            or "registry_login" or "registry_logout" => UserRole.Admin,
         _ => UserRole.Admin,
     };
 

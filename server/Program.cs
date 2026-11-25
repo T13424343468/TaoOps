@@ -789,8 +789,9 @@ public sealed record BootstrapRequest(string? Username, string? Password);
 public sealed record CreateUserRequest(string? Username, string? Password, string? Role);
 public sealed record NodeCmdRequest(string? Command, IReadOnlyList<string>? Args, int TimeoutMs);
 
-// ---- FR-A11 Docker 下发请求 ----
-public sealed record DockerOpRequest(string? Op, string? Name, string? Ref, string? Command, int? Tail, int TimeoutMs);
+// ---- FR-A11 Docker 下发请求（backlog A 增加速器/仓库登录字段）----
+public sealed record DockerOpRequest(string? Op, string? Name, string? Ref, string? Command, int? Tail,
+    string? Addr, string? Registry, string? Username, string? Password, int TimeoutMs);
 
 // ---- FR-A12 网站统计下发请求 ----
 public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, string? From, string? To, int TimeoutMs);
@@ -864,13 +865,18 @@ internal static class WebStatsOpArgs
 
 internal static class DockerOpArgs
 {
-    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。
+    /// registry_login 的密码经 stdin 下发，不进审计（审计只记 user/role/action/result）。</summary>
     public static IReadOnlyList<string> Build(DockerOpRequest req)
     {
         var args = new List<string> { $"op={req.Op}" };
         if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
         if (!string.IsNullOrEmpty(req.Ref)) args.Add($"ref={req.Ref}");
         if (!string.IsNullOrEmpty(req.Command)) args.Add($"command={req.Command}");
+        if (!string.IsNullOrEmpty(req.Addr)) args.Add($"addr={req.Addr}");
+        if (!string.IsNullOrEmpty(req.Registry)) args.Add($"registry={req.Registry}");
+        if (!string.IsNullOrEmpty(req.Username)) args.Add($"username={req.Username}");
+        if (!string.IsNullOrEmpty(req.Password)) args.Add($"password={req.Password}");
         if (req.Tail is int tail) args.Add($"tail={tail}");
         return args;
     }

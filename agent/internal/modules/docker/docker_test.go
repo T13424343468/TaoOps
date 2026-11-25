@@ -299,3 +299,214 @@ func readAudit(t *testing.T, path string) []AuditEntry {
 	}
 	return entries
 }
+
+// ---- FR-A14 扩展（backlog A）：镜像加速器与私有仓库登录 ----
+
+func newMgrCfg(t *testing.T, fail bool) (*Manager, *[]string, string) {
+	t.Helper()
+	m, log := newMgr(t, fail)
+	dir := t.TempDir()
+	m.DaemonJSON = filepath.Join(dir, "daemon.json")
+	m.DockerConfig = filepath.Join(dir, "config.json")
+	return m, log, dir
+}
+
+func TestMirrorList_MissingFile_ReturnsEmpty(t *testing.T) {
+	m, _, _ := newMgrCfg(t, false)
+	list, err := m.MirrorList()
+	if err != nil || len(list) != 0 {
+		t.Fatalf("MirrorList = %v, %v", list, err)
+	}
+}
+
+func TestMirrorAdd_WritesConfigPreservingKeys(t *testing.T) {
+	m, _, dir := newMgrCfg(t, false)
+	os.WriteFile(m.DaemonJSON, []byte("{\"debug\":true,\"registry-mirrors\":[\"https://old.example.com\"]}"), 0o644)
+	if err := m.MirrorAdd("https://docker.m.daocloud.io"); err != nil {
+		t.Fatalf("MirrorAdd: %v", err)
+	}
+	b, _ := os.ReadFile(m.DaemonJSON)
+	var cfg map[string]any
+	if json.Unmarshal(b, &cfg) != nil {
+		t.Fatalf("daemon.json invalid json: %s", b)
+	}
+	if cfg["debug"] != true {
+		t.Fatalf("other keys lost: %s", b)
+	}
+	mirrors := cfg["registry-mirrors"].([]any)
+	if len(mirrors) != 2 || mirrors[1] != "https://docker.m.daocloud.io" {
+		t.Fatalf("mirrors = %v", mirrors)
+	}
+	// 备份文件存在
+	entries, _ := filepath.Glob(dir + "/daemon.json.bak.*")
+	if len(entries) != 1 {
+		t.Fatalf("backup missing: %v", entries)
+	}
+}
+
+func TestMirrorAdd_Duplicate_Idempotent(t *testing.T) {
+	m, _, _ := newMgrCfg(t, false)
+	_ = m.MirrorAdd("https://a.example.com")
+	if err := m.MirrorAdd("https://a.example.com"); err != nil {
+		t.Fatalf("dup add: %v", err)
+	}
+	list, _ := m.MirrorList()
+	if len(list) != 1 {
+		t.Fatalf("mirrors = %v", list)
+	}
+}
+
+func TestMirrorAdd_InvalidURL_Rejected(t *testing.T) {
+	m, _, _ := newMgrCfg(t, false)
+	for _, bad := range []string{"ftp://x.example.com", "https://", "https://a b.com", "a.example.com; rm -rf /"} {
+		if err := m.MirrorAdd(bad); err == nil {
+			t.Fatalf("accepted bad mirror %q", bad)
+		}
+	}
+}
+
+func TestMirrorRemove_RemovesEntry(t *testing.T) {
+	m, _, _ := newMgrCfg(t, false)
+	_ = m.MirrorAdd("https://a.example.com")
+	_ = m.MirrorAdd("https://b.example.com")
+	if err := m.MirrorRemove("https://a.example.com"); err != nil {
+		t.Fatalf("MirrorRemove: %v", err)
+	}
+	list, _ := m.MirrorList()
+	if len(list) != 1 || list[0] != "https://b.example.com" {
+		t.Fatalf("mirrors = %v", list)
+	}
+	if err := m.MirrorRemove("https://gone.example.com"); err != nil {
+		t.Fatalf("remove missing should be idempotent: %v", err)
+	}
+}
+
+func TestDaemonRestart_UsesSystemctl(t *testing.T) {
+	m, log, _ := newMgrCfg(t, false)
+	if err := m.DaemonRestart(); err != nil {
+		t.Fatalf("DaemonRestart: %v", err)
+	}
+	if !strings.Contains((*log)[0], "systemctl restart docker") {
+		t.Fatalf("log = %v", *log)
+	}
+}
+
+func TestRegistryLogin_PasswordViaStdinNotArgv(t *testing.T) {
+	var gotStdin string
+	var argv []string
+	m, _, _ := newMgrCfg(t, false)
+	m.Run = func(bin string, args []string, stdin string) (string, string, error) {
+		argv = args
+		gotStdin = stdin
+		return "", "", nil
+	}
+	if err := m.RegistryLogin("registry.example.com:5000", "ops-user", "s3cret-pw"); err != nil {
+		t.Fatalf("RegistryLogin: %v", err)
+	}
+	if gotStdin != "s3cret-pw" {
+		t.Fatalf("password not via stdin: %q", gotStdin)
+	}
+	joined := strings.Join(argv, " ")
+	if strings.Contains(joined, "s3cret-pw") {
+		t.Fatalf("password leaked into argv: %v", argv)
+	}
+	if !strings.Contains(joined, "--password-stdin") || !strings.Contains(joined, "registry.example.com:5000") {
+		t.Fatalf("argv = %v", argv)
+	}
+}
+
+func TestRegistryLogin_EmptyRegistryMeansDockerHub(t *testing.T) {
+	var argv []string
+	m, _, _ := newMgrCfg(t, false)
+	m.Run = func(bin string, args []string, stdin string) (string, string, error) {
+		argv = args
+		return "", "", nil
+	}
+	if err := m.RegistryLogin("", "user", "pw"); err != nil {
+		t.Fatalf("RegistryLogin: %v", err)
+	}
+	if strings.Join(argv, " ") != "--host unix:///var/run/docker.sock login -u user --password-stdin" {
+		t.Fatalf("argv = %v", argv)
+	}
+}
+
+func TestRegistryLogin_InvalidInputs_Rejected(t *testing.T) {
+	m, _, _ := newMgrCfg(t, false)
+	if err := m.RegistryLogin("bad host", "u", "p"); err == nil {
+		t.Fatal("accepted bad registry")
+	}
+	if err := m.RegistryLogin("reg.example.com", "u\tp", "p"); err == nil {
+		t.Fatal("accepted bad username")
+	}
+	if err := m.RegistryLogin("reg.example.com", "u", "p\nrm -rf /"); err == nil {
+		t.Fatal("accepted password with newline")
+	}
+}
+
+func TestRegistryLogin_AuditWithoutPassword(t *testing.T) {
+	m, _, dir := newMgrCfg(t, false)
+	m.Run = func(bin string, args []string, stdin string) (string, string, error) { return "", "", nil }
+	if err := m.RegistryLogin("reg.example.com", "ops-user", "s3cret-pw"); err != nil {
+		t.Fatalf("RegistryLogin: %v", err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+	if strings.Contains(string(b), "s3cret-pw") {
+		t.Fatalf("audit leaked password: %s", b)
+	}
+	if !strings.Contains(string(b), "registry_login") || !strings.Contains(string(b), "ops-user") {
+		t.Fatalf("audit missing action/user: %s", b)
+	}
+}
+
+func TestRegistryList_ReadsConfigJSON(t *testing.T) {
+	m, _, _ := newMgrCfg(t, false)
+	os.WriteFile(m.DockerConfig, []byte(`{"auths":{"registry.example.com:5000":{"auth":"xxx"},"https://index.docker.io/v1/":{"auth":"yyy"}}}`), 0o600)
+	hosts, err := m.RegistryList()
+	if err != nil {
+		t.Fatalf("RegistryList: %v", err)
+	}
+	if len(hosts) != 2 || hosts[0] != "https://index.docker.io/v1/" || hosts[1] != "registry.example.com:5000" {
+		t.Fatalf("hosts = %v", hosts)
+	}
+}
+
+func TestRegistryList_MissingConfig_ReturnsEmpty(t *testing.T) {
+	m, _, _ := newMgrCfg(t, false)
+	hosts, err := m.RegistryList()
+	if err != nil || len(hosts) != 0 {
+		t.Fatalf("RegistryList = %v, %v", hosts, err)
+	}
+}
+
+func TestHandler_RegistryAndMirrorOps(t *testing.T) {
+	m, _, _ := newMgrCfg(t, false)
+	h := Handler(m)
+	r, err := h(map[string]any{"op": "mirror_add", "addr": "https://m.example.com"})
+	if err != nil || r.ExitCode != 0 {
+		t.Fatalf("mirror_add: %v %v", r, err)
+	}
+	r, err = h(map[string]any{"op": "mirror_list"})
+	if err != nil || r.ExitCode != 0 {
+		t.Fatalf("mirror_list: %v %v", r, err)
+	}
+	r, err = h(map[string]any{"op": "registry_login", "registry": "reg.example.com", "username": "u", "password": "p"})
+	if err != nil || r.ExitCode != 0 {
+		t.Fatalf("registry_login: %v %v", r, err)
+	}
+	r, err = h(map[string]any{"op": "registry_list"})
+	if err != nil || r.ExitCode != 0 {
+		t.Fatalf("registry_list: %v %v", r, err)
+	}
+	r, _ = h(map[string]any{"op": "registry_logout", "registry": "reg.example.com"})
+	if r.ExitCode != 0 {
+		t.Fatalf("registry_logout: %v", r)
+	}
+	r, _ = h(map[string]any{"op": "daemon_restart"})
+	if r.ExitCode != 0 {
+		t.Fatalf("daemon_restart: %v", r)
+	}
+	r, _ = h(map[string]any{"op": "nope"})
+	if r.ExitCode != 2 {
+		t.Fatalf("unknown op should exit 2: %v", r)
+	}
+}

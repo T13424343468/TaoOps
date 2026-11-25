@@ -12,6 +12,7 @@ import FilesPage from "./pages/Files";
 import MetricsPage from "./pages/Metrics";
 import AppDeployPage from "./pages/AppDeploy";
 import K8sPage from "./pages/K8s";
+import DockerPage from "./pages/Docker";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
@@ -47,6 +48,12 @@ beforeAll(() => {
     if (u.includes("/apps")) return json({ exit_code: 0, output: JSON.stringify({ templates: [{ id: "nginx", name: "Nginx 网页服务器", arch: "amd64+arm64", kind: "single", services: [{ name: "nginx", image: "nginx:stable" }] }], apps: [{ app: "my-site", template_id: "nginx", images: ["nginx:stable"], deployed_at: "2026-11-24T15:00:00Z", health: "healthy" }] }) });
     if (u.includes("/api/k8s/clusters")) return json([{ name: "prod", server: "https://10.0.0.1:6443", version: "v1.30.0", added_ms: Date.now() }]);
     if (u.includes("/api/k8s/")) return json([]);
+    if (u.includes("/docker")) return json({ exit_code: 0, output: JSON.stringify({
+      containers: [{ id: "abc123", names: ["web"], image: "nginx:1.25", state: "running", status: "Up 2 hours", ports: "80/tcp" }],
+      images: [{ repo: "nginx", tag: "1.25", id: "a1b2c3", size: "187MB", created: "2 weeks ago" }],
+      mirrors: ["https://docker.m.daocloud.io"],
+      registries: ["registry.example.com:5000"],
+    }) });
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -166,6 +173,16 @@ describe("23 页全覆盖冒烟", () => {
     expect(screen.getByText("已部署应用")).toBeTruthy();
     await waitFor(() => expect(screen.getByText("my-site")).toBeTruthy());
     expect(screen.getByText("healthy")).toBeTruthy();
+  });
+
+  it("Docker 页：容器镜像加速器仓库（真连 docker 端点）", async () => {
+    renderAt(<DockerPage />);
+    await waitFor(() => expect(screen.getAllByText("web-01").length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getAllByText("nginx:1.25").length).toBeGreaterThan(0));
+    expect(screen.getByText("镜像加速器")).toBeTruthy();
+    expect(screen.getByText("私有仓库")).toBeTruthy();
+    expect(screen.getByText("https://docker.m.daocloud.io")).toBeTruthy();
+    expect(screen.getByText("registry.example.com:5000")).toBeTruthy();
   });
 
   it("K8s 集群页：集群列表与视图页签（真连 k8s 端点）", async () => {
