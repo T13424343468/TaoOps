@@ -655,6 +655,10 @@ public class CoverageBackfillEndpointTests
     [Fact]
     public void ConfigureTransport_EnvUnset_UsesDefaults()
     {
+        if (!TryEnsureSystemDataDir())
+        {
+            return; // 非 root 环境（如 CI runner）无法创建 /var/lib/taoops，系统路径分支仅 root 可实测
+        }
         var prevData = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR");
         var prevPort = Environment.GetEnvironmentVariable("TAOOPS_PORT");
         Environment.SetEnvironmentVariable("TAOOPS_DATA_DIR", null);
@@ -806,6 +810,10 @@ public class CoverageBackfillEndpointTests
     [Fact]
     public async Task Program_TopLevel_DataDirUnset_UsesSystemPath()
     {
+        if (!TryEnsureSystemDataDir())
+        {
+            return; // 非 root 环境（如 CI runner）无法创建 /var/lib/taoops，系统路径分支仅 root 可实测
+        }
         var prevData = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR");
         var prevInsecure = Environment.GetEnvironmentVariable("TAOOPS_INSECURE");
         Environment.SetEnvironmentVariable("TAOOPS_DATA_DIR", null);
@@ -826,9 +834,28 @@ public class CoverageBackfillEndpointTests
             try { Directory.Delete("/var/lib/taoops/server", recursive: true); } catch { }
         }
     }
+
+    /// <summary>尝试确保系统默认数据目录可创建；非 root（如 CI runner）返回 false，调用方跳过系统路径实测。</summary>
+    private static bool TryEnsureSystemDataDir()
+    {
+        try
+        {
+            Directory.CreateDirectory("/var/lib/taoops");
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
 }
 
-/// <summary>覆盖账补齐第三批：单机分支（无需 Web 装配）。</summary>
+/// <summary>覆盖账补齐第三批：单机分支（无需 Web 装配）。动进程级环境变量，并入 Integration 集合串行，避免与工厂静态策略初始化竞态。</summary>
+[Collection("Integration")]
 public class CoverageBackfillUnitTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "taoops-cb2-" + Guid.NewGuid().ToString("N"));
