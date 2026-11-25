@@ -188,6 +188,10 @@ jobs:
             sleep 0.5
           done
           tail -5 "$LIVE/agent.log"
+          NODE_ID=$(grep -o 'registered as node [0-9a-f]*' "$LIVE/agent.log" | tail -1 | awk '{print $4}')
+          [ -n "$NODE_ID" ] || { echo "FATAL: node_id not resolved from agent.log"; exit 1; }
+          echo "resolved node_id: $NODE_ID"
+          echo "TAOOPS_NODE_ID=$NODE_ID" >> "$GITHUB_ENV"
 
       - name: SSH 防爆破实弹断言（L6）+ 回流断言（L7）
         run: |
@@ -204,8 +208,9 @@ jobs:
           sleep 1
           FAILED=$(sudo grep -c "Failed password" /var/log/auth.log 2>/dev/null || echo 0)
           echo "L6a auth.log Failed password lines: $FAILED"
-          SEC_OUT=$("$LIVE/bin/dispatch" "127.0.0.1:5243" "live-node-1" sec.manage op=scan 2>&1) || true
+          SEC_OUT=$("$LIVE/bin/dispatch" "127.0.0.1:5243" "$TAOOPS_NODE_ID" sec.manage op=scan 2>&1) || true
           echo "L6b dispatch sec.manage: $SEC_OUT"
+          echo "$SEC_OUT" | grep -q "RESULT exit=0" || { echo "L6b FAIL: sec.manage dispatch not green"; exit 1; }
           sleep 1
           if [ -f "$SEC_LOG" ]; then
             echo "L6c TAOOPS_SEC events: $(grep -c TAOOPS_SEC "$SEC_LOG" || true)"
@@ -215,10 +220,10 @@ jobs:
           echo "== L7 log-stream roundtrip =="
           dotnet build tools/wsprobe -c Release -o "$LIVE/wsprobedir" >/dev/null
           WSPROBE_OUT=$(dotnet "$LIVE/wsprobedir/wsprobe.dll" logs \
-            "wss://127.0.0.1:5243/ws/agent/live-node-1/logs?path=$EVENTS_LOG&tail=5" TAOOPS_WAF 12 2>&1 || true)
+            "wss://127.0.0.1:5243/ws/agent/$TAOOPS_NODE_ID/logs?path=$EVENTS_LOG&tail=5" TAOOPS_WAF 12 2>&1 || true)
           curl -s -o /dev/null 'http://127.0.0.1:8080/?id=2%20union%20select%20livefire'
           sleep 1
-          echo "$WSPROBE_OUT" | grep -q TAOOPS_WAF && echo "L7 roundtrip: DELIVERED" || { echo "L7 roundtrip: MISSING"; echo "$WSPROBE_OUT" | tail -5; }
+          echo "$WSPROBE_OUT" | grep -q TAOOPS_WAF && echo "L7 roundtrip: DELIVERED" || { echo "L7 roundtrip: MISSING"; echo "$WSPROBE_OUT" | tail -5; exit 1; }
 
       - name: 关5 暴力——恶意输入灌压（八道关流水线）
         run: |
@@ -293,8 +298,8 @@ jobs:
               "$LIVE/bin/agent" >> "$LIVE/agent.log" 2>&1 &
             RECOVERED=no
             for i in $(seq 1 30); do
-              OUT=$("$LIVE/bin/dispatch" "127.0.0.1:5243" "live-node-1" "sysinfo.overview" op=summary 2>&1) || true
-              echo "$OUT" | grep -q '"exit_code":0' && { RECOVERED=yes; break; }
+              OUT=$("$LIVE/bin/dispatch" "127.0.0.1:5243" "$TAOOPS_NODE_ID" "sysinfo.overview" op=overview 2>&1) || true
+              echo "$OUT" | grep -q "RESULT exit=0" && { RECOVERED=yes; break; }
               sleep 2
             done
             echo "agent recovered: $RECOVERED"

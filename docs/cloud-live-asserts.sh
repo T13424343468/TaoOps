@@ -13,7 +13,7 @@ EVENTS_LOG=/var/log/taoops-waf/events.log
 LIVE=/tmp/taoops-live
 PORT=8080
 SRV_PORT=${TAOOPS_PORT:-5243}
-NODE=${TAOOPS_NODE:-live-node-1}
+NODE=${TAOOPS_NODE_ID:-${TAOOPS_NODE:-live-node-1}}
 SEC_LOG=${TAOOPS_SEC_LOG_PATH:-/var/log/taoops-sec/events.log}
 
 # ---------- 阶段1：装配与启动 ----------
