@@ -22,9 +22,10 @@ import MetricsPage from "./pages/Metrics";
 import AppDeployPage from "./pages/AppDeploy";
 import K8sPage from "./pages/K8s";
 import DockerPage from "./pages/Docker";
+import WebstatsPage from "./pages/Webstats";
 import ModulePage from "./pages/ModulePage";
 import {
-  AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE, WEBSTATS_PAGE,
+  AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE,
   NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
@@ -43,7 +44,7 @@ const router = createHashRouter([
     { path: "docker", element: <DockerPage /> },
     { path: "apps", element: <AppDeployPage /> },
     { path: "k8s", element: <K8sPage /> },
-    { path: "webstats", element: <ModulePage config={WEBSTATS_PAGE} /> },
+    { path: "webstats", element: <WebstatsPage /> },
     { path: "backup", element: <BackupPage /> },
     { path: "migrate", element: <MigratePage /> },
     { path: "lb", element: <LbPage /> },
