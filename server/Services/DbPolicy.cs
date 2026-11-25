@@ -5,7 +5,8 @@ namespace TaoOps.Server.Services;
 /// <summary>
 /// FR-A15 复制操作权限策略（契约 §13）：replica_status 为只读动作限
 /// ReadOnly 及以上；master_grant/replica_config/replica_reset 涉及凭据
-/// 与复制拓扑变更限 Admin；既有 db ops 不走本端点（沿用 /cmd 通道）。
+/// 与复制拓扑变更限 Admin。backlog B2 切真扩展：backups（备份清单）为只读；
+/// create/drop/backup/restore 属库级变更动作限 Operator 及以上。
 /// 单一正源，端点与矩阵测试共用。
 /// </summary>
 public static class DbPolicy
@@ -15,6 +16,8 @@ public static class DbPolicy
     {
         "replica_status" => UserRole.ReadOnly,
         "db_grant_list" => UserRole.ReadOnly,
+        "backups" => UserRole.ReadOnly,
+        "create" or "drop" or "backup" or "restore" => UserRole.Operator,
         "db_grant_add" or "db_grant_revoke" => UserRole.Admin,
         "master_grant" or "replica_config" or "replica_reset" => UserRole.Admin,
         _ => UserRole.Admin,
@@ -68,6 +71,22 @@ internal static class DbReplicaArgs
         if (!string.IsNullOrEmpty(req.MasterPassword)) args.Add($"master_password={req.MasterPassword}");
         if (!string.IsNullOrEmpty(req.MasterLogFile)) args.Add($"master_log_file={req.MasterLogFile}");
         if (req.MasterLogPos is int pos) args.Add($"master_log_pos={pos}");
+        return args;
+    }
+}
+
+/// <summary>数据库基础操作端点请求体（backlog B2 切真）。</summary>
+public sealed record DbOpRequest(string? Op, string? Engine, string? Name, string? Dump, int TimeoutMs);
+
+/// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+internal static class DbOpArgs
+{
+    public static IReadOnlyList<string> Build(DbOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Engine)) args.Add($"engine={req.Engine}");
+        if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
+        if (!string.IsNullOrEmpty(req.Dump)) args.Add($"dump={req.Dump}");
         return args;
     }
 }

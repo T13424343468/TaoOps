@@ -25,10 +25,11 @@ import DockerPage from "./pages/Docker";
 import WebstatsPage from "./pages/Webstats";
 import CronPage from "./pages/Cron";
 import SitePage from "./pages/Site";
+import DbPage from "./pages/Db";
 import ModulePage from "./pages/ModulePage";
 import {
-  AI_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE,
-  // SITE_PAGE 已切真（backlog B2）
+  AI_PAGE, ENV_PAGE, FTP_PAGE,
+  // DB_PAGE 已切真（backlog B2）
   NODES_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
@@ -39,7 +40,7 @@ const router = createHashRouter([
     { path: "term", element: <TermPage /> },
     { path: "monitor", element: <MetricsPage /> },
     { path: "site", element: <SitePage /> },
-    { path: "db", element: <ModulePage config={DB_PAGE} /> },
+    { path: "db", element: <DbPage /> },
     { path: "files", element: <FilesPage /> },
     { path: "ftp", element: <ModulePage config={FTP_PAGE} /> },
     { path: "cron", element: <CronPage /> },

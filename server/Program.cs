@@ -704,6 +704,24 @@ app.MapPost("/api/nodes/{id}/db", async (string id, DbReplicaRequest req, HttpCo
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// 数据库基础操作专用端点（backlog B2 切真）：按操作分级鉴权（DbPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/db/ops", async (string id, DbOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DbPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for db op" }, statusCode: 403);
+    }
+    var args = DbOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "db.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 // FR-A21 SSL 证书端点：按操作分级鉴权（SslPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/ssl", async (string id, SslOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
