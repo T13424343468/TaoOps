@@ -17,6 +17,7 @@ import WebstatsPage from "./pages/Webstats";
 import CronPage from "./pages/Cron";
 import SitePage from "./pages/Site";
 import DbPage from "./pages/Db";
+import FtpPage from "./pages/Ftp";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
 import TermPage from "./pages/Term";
@@ -64,6 +65,7 @@ beforeAll(() => {
     if (u.includes("/cron")) return json({ exit_code: 0, output: JSON.stringify({ jobs: [{ name: "nightly-backup", schedule: "0 2 * * *", command: "/usr/local/bin/backup.sh --full" }] }) });
     if (u.includes("/site")) return json({ exit_code: 0, output: JSON.stringify({ sites: [{ name: "my-site", config: "server { listen 80; }", server_name: "example.com", proxy_pass: "http://127.0.0.1:3000" }] }) });
     if (u.includes("/db/ops")) return json({ exit_code: 0, output: JSON.stringify(["mysql-app_prod-20261125030000.sql"]) });
+    if (u.includes("/ftp")) return json({ exit_code: 0, output: JSON.stringify([{ name: "deploy", root_dir: "/srv/ftp/deploy", allowed_dirs: ["/srv/ftp/deploy"], created_at: "2026-11-25 10:00" }]) });
     if (u.includes("/api/nodes")) return json([
       { nodeId: "node-abcdef1234567890", hostname: "web-01", lastSeenMs: Date.now(), registeredAtMs: Date.now(), commandConnected: true },
     ]);
@@ -205,6 +207,12 @@ describe("23 页全覆盖冒烟", () => {
     renderAt(<DbPage />);
     await waitFor(() => expect(screen.getAllByText("mysql-app_prod-20261125030000.sql").length).toBeGreaterThan(0));
     expect(screen.getAllByText("数据库").length).toBeGreaterThan(0);
+  });
+
+  it("FTP 页：账号清单真连（ftp 端点）", async () => {
+    renderAt(<FtpPage />);
+    await waitFor(() => expect(screen.getAllByText("deploy").length).toBeGreaterThan(0));
+    expect(screen.getAllByText("FTP 管理").length).toBeGreaterThan(0);
   });
 
   it("计划任务页：任务列表真连（cron 端点）", async () => {
