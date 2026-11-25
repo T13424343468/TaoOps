@@ -29,6 +29,9 @@ import DbPage from "./pages/Db";
 import FtpPage from "./pages/Ftp";
 import EnvPage from "./pages/Env";
 import UpgradePage from "./pages/Upgrade";
+import UsersPage from "./pages/Users";
+import FwPage from "./pages/Fw";
+import SettingsPage from "./pages/Settings";
 import ModulePage from "./pages/ModulePage";
 import {
   AI_PAGE,
@@ -57,6 +60,9 @@ const router = createHashRouter([
     { path: "lb", element: <LbPage /> },
     { path: "ssl", element: <SslPage /> },
     { path: "waf", element: <WafPage /> },
+    { path: "fw", element: <FwPage /> },
+    { path: "users", element: <UsersPage /> },
+    { path: "settings", element: <SettingsPage /> },
     { path: "audit", element: <AuditPage /> },
     { path: "totp", element: <TotpPage /> },
     { path: "ai", element: <ModulePage config={AI_PAGE} /> },
