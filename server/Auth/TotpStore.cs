@@ -35,7 +35,8 @@ public sealed class TotpStore
     {
         _dirPath = Path.Combine(dataDir, "auth", "totp");
         Directory.CreateDirectory(_dirPath);
-        TryChmod600(_dirPath);
+        // 目录须保留执行位（700）：600 无 x 位时非 root 进程无法在其中创建文件。
+        TryChmod(_dirPath, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
     private string PathFor(string username) =>
@@ -78,12 +79,16 @@ public sealed class TotpStore
     }
 
     /// <summary>落盘权限 600（验收口径）；受限平台尽力而为不抛错。</summary>
-    private static void TryChmod600(string path)
+    private static void TryChmod600(string path) =>
+        TryChmod(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+
+    /// <summary>按目标权限位设置 Unix 文件模式；受限平台尽力而为不抛错。</summary>
+    private static void TryChmod(string path, UnixFileMode mode)
     {
         try
         {
             if (!OperatingSystem.IsWindows())
-                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                File.SetUnixFileMode(path, mode);
         }
         catch (PlatformNotSupportedException) { }
         catch (UnauthorizedAccessException) { }

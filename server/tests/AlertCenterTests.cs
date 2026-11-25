@@ -9,7 +9,8 @@ using Xunit;
 
 namespace TaoOps.Server.Tests;
 
-/// <summary>告警账本单元测试（FR-A19）：落盘/重载/过滤/已读/保留策略。</summary>
+/// <summary>告警账本单元测试（FR-A19）：落盘/重载/过滤/已读/保留策略。动进程级环境变量，并入 Integration 集合串行。</summary>
+[Collection("Integration")]
 public sealed class AlertStoreTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "taoops-alerts-" + Guid.NewGuid().ToString("N"));
