@@ -1,6 +1,7 @@
 package fw
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,5 +145,26 @@ func TestHandlerOps(t *testing.T) {
 	}
 	if _, err := h(map[string]any{"op": "remove", "port": 8080}); err != nil {
 		t.Fatalf("remove: %v", err)
+	}
+}
+
+func TestHandlerAuditOutputJSON(t *testing.T) {
+	m, _ := newMgr(t, false)
+	h := Handler(m)
+	if _, err := h(map[string]any{"op": "allow", "port": 8080}); err != nil {
+		t.Fatalf("allow: %v", err)
+	}
+	res, err := h(map[string]any{"op": "audit"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("audit: %v %v", res, err)
+	}
+	var parsed struct {
+		Entries []map[string]any `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("audit output must be JSON object, got %q: %v", res.Output, err)
+	}
+	if len(parsed.Entries) != 1 {
+		t.Fatalf("audit output entries mismatch: %v", parsed.Entries)
 	}
 }
