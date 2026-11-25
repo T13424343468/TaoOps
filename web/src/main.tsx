@@ -27,10 +27,11 @@ import CronPage from "./pages/Cron";
 import SitePage from "./pages/Site";
 import DbPage from "./pages/Db";
 import FtpPage from "./pages/Ftp";
+import EnvPage from "./pages/Env";
 import ModulePage from "./pages/ModulePage";
 import {
-  AI_PAGE, ENV_PAGE,
-  // DB_PAGE、FTP_PAGE 已切真（backlog B2）
+  AI_PAGE,
+  // DB_PAGE、FTP_PAGE、ENV_PAGE 已切真（backlog B2）
   NODES_PAGE, UPGRADE_PAGE,
 } from "./pages/configs";
 
@@ -45,7 +46,7 @@ const router = createHashRouter([
     { path: "files", element: <FilesPage /> },
     { path: "ftp", element: <FtpPage /> },
     { path: "cron", element: <CronPage /> },
-    { path: "env", element: <ModulePage config={ENV_PAGE} /> },
+    { path: "env", element: <EnvPage /> },
     { path: "docker", element: <DockerPage /> },
     { path: "apps", element: <AppDeployPage /> },
     { path: "k8s", element: <K8sPage /> },

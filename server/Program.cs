@@ -740,6 +740,24 @@ app.MapPost("/api/nodes/{id}/ftp", async (string id, FtpOpRequest req, HttpConte
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// 环境变量（运行环境）专用端点（backlog B2 切真）：按操作分级鉴权（EnvPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/env", async (string id, EnvOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !EnvPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for env op" }, statusCode: 403);
+    }
+    var args = EnvOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "env.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 // FR-A21 SSL 证书端点：按操作分级鉴权（SslPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/ssl", async (string id, SslOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
