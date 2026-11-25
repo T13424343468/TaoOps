@@ -441,7 +441,9 @@ func Handler(m *Manager) registry.Handler {
 		app, _ := args["app"].(string)
 		switch op {
 		case "templates":
-			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"templates": Templates()}}, nil
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			tb, _ := json.Marshal(map[string]any{"templates": Templates()})
+			return registry.Result{ExitCode: 0, Output: string(tb), Data: map[string]any{"templates": Templates()}}, nil
 		case "deploy":
 			tid, _ := args["template"].(string)
 			env := envOverridesFromArgs(args)
@@ -462,7 +464,9 @@ func Handler(m *Manager) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"apps": list}}, nil
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			b, _ := json.Marshal(map[string]any{"apps": list})
+			return registry.Result{ExitCode: 0, Output: string(b), Data: map[string]any{"apps": list}}, nil
 		case "remove":
 			if err := m.Remove(app); err != nil {
 				return registry.Result{ExitCode: 1}, err
