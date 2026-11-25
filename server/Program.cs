@@ -8,6 +8,7 @@ using TaoOps.Server.Relay;
 using TaoOps.Server.Sec;
 using TaoOps.Server.Services;
 using TaoOps.Server.Services.K8s;
+using TaoOps.Server.Settings;
 using TaoOps.Server.Waf;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -42,13 +43,16 @@ builder.Services.AddSingleton<Push.PushChannelStore>(_ => new Push.PushChannelSt
 builder.Services.AddSingleton<Push.SsrfWhitelistStore>(_ => new Push.SsrfWhitelistStore(wafDataDir));
 builder.Services.AddSingleton<Push.PushLogStore>(_ => new Push.PushLogStore(wafDataDir));
 builder.Services.AddSingleton<Push.PushDispatcher>();
+// 系统设置存储（backlog F4）：告警阈值等落盘 dataDir/settings.json。
+builder.Services.AddSingleton<SettingsStore>(_ => new SettingsStore(wafDataDir));
 builder.Services.AddSingleton<AlertCenter>(sp =>
 {
     var push = new Push.PushDispatcher(
         sp.GetRequiredService<Push.PushChannelStore>(),
         sp.GetRequiredService<Push.SsrfWhitelistStore>(),
         sp.GetRequiredService<Push.PushLogStore>());
-    return new AlertCenter(sp.GetRequiredService<AlertStore>(), push);
+    return new AlertCenter(sp.GetRequiredService<AlertStore>(), push,
+        sp.GetRequiredService<SettingsStore>());
 });
 // FR-A15 复制中断巡检：60s 轮询在线节点 replica_status，中断/超阈值接告警中心。
 builder.Services.AddSingleton<ReplicationMonitor>(sp => new ReplicationMonitor(
@@ -286,6 +290,52 @@ app.MapDelete("/api/auth/users/{username}", (string username, UserStore users) =
 app.MapGet("/api/auth/lockouts", (AuthService auth) =>
     Results.Json(auth.Lockouts(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 
+// 修改自己密码（backlog F2）：旧密码校验 + 新密码落哈希；审计留痕不含密码内容。
+app.MapPost("/api/auth/change-password", (ChangePasswordRequest req, HttpContext http,
+    UserStore users, AuditStore audit) =>
+{
+    var username = http.Items["taoops.user"]?.ToString() ?? "";
+    var account = users.Find(username);
+    if (account is null) return Results.Json(new { error = "user not found" }, statusCode: 404);
+    if (!AuthService.VerifyPassword(req.OldPassword ?? "", account.PasswordHash))
+    {
+        audit.Append(new AuditEvent { User = username, Role = http.Items["taoops.role"]?.ToString() ?? "",
+            Action = "auth.change_password", Target = username,
+            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "old_password_mismatch" });
+        return Results.Json(new { error = "旧密码不正确" }, statusCode: 400);
+    }
+    if (string.IsNullOrEmpty(req.NewPassword) || req.NewPassword.Length < 8)
+        return Results.Json(new { error = "新密码至少 8 位" }, statusCode: 400);
+    users.UpdatePasswordHash(username, AuthService.HashPassword(req.NewPassword));
+    audit.Append(new AuditEvent { User = username, Role = http.Items["taoops.role"]?.ToString() ?? "",
+        Action = "auth.change_password", Target = username,
+        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+    return Results.Ok();
+});
+
+// 系统设置（backlog F4）：告警阈值可视化。GET 回显（登录即可），PUT 落盘（Admin only）。
+app.MapGet("/api/settings/alerts", (AlertCenter alerts) =>
+    Results.Json(new { disk_critical_pct = alerts.DiskCriticalPct, disk_reset_pct = alerts.DiskResetPct }));
+app.MapPut("/api/settings/alerts", (AlertThresholdSettings req, HttpContext http,
+    SettingsStore store, AlertCenter alerts, AuditStore audit) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || role != UserRole.Admin)
+        return Results.Json(new { error = "admin role required" }, statusCode: 403);
+    if (req.DiskCriticalPct is < 1 or > 99) return Results.Json(new { error = "disk_critical_pct 须在 1-99" }, statusCode: 400);
+    if (req.DiskResetPct is < 1 or > 99) return Results.Json(new { error = "disk_reset_pct 须在 1-99" }, statusCode: 400);
+    if (req.DiskResetPct >= req.DiskCriticalPct)
+        return Results.Json(new { error = "复位阈值须低于触发阈值（迟滞口径）" }, statusCode: 400);
+    store.Save(req);
+    alerts.ReloadThresholds(store);
+    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "", Role = roleStr,
+        Action = "settings.alerts", Target = "alert_thresholds",
+        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "",
+        Result = $"critical={req.DiskCriticalPct} reset={req.DiskResetPct}" });
+    return Results.Json(new { disk_critical_pct = alerts.DiskCriticalPct, disk_reset_pct = alerts.DiskResetPct,
+        note = "阈值已落盘并即时生效" });
+});
+
 // ---- 审计（FR-D4：留痕/哈希链/查询/导出）----
 app.MapGet("/api/audit", (AuditStore store, string? user, long? from, long? to) =>
     Results.Json(store.Query(user, from, to)));
@@ -432,6 +482,42 @@ app.MapPost("/api/nodes/{id}/webstats", async (string id, WebStatsOpRequest req,
     try
     {
         var outcome = await bridge.DispatchAsync(id, "webstats.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// 主机防火墙端点（backlog F3）：按操作分级鉴权（FwPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/fw", async (string id, FwOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !FwPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for fw op" }, statusCode: 403);
+    }
+    var args = FwOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "fw.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// 防篡改状态端点（backlog F3）：status 只读，经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/tamperguard", async (string id, TamperGuardOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !TamperGuardPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for tamperguard op" }, statusCode: 403);
+    }
+    var args = new List<string> { $"op={req.Op}" };
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "tamper.guard", args, req.TimeoutMs,
             http.Items["taoops.user"]?.ToString() ?? "", roleStr,
             http.Connection.RemoteIpAddress?.ToString() ?? "");
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
@@ -895,6 +981,7 @@ public sealed record LoginRequest(string? Username, string? Password);
 public sealed record ToggleEnabled(bool Enabled);
 public sealed record BootstrapRequest(string? Username, string? Password);
 public sealed record CreateUserRequest(string? Username, string? Password, string? Role);
+public sealed record ChangePasswordRequest(string? OldPassword, string? NewPassword);
 public sealed record NodeCmdRequest(string? Command, IReadOnlyList<string>? Args, int TimeoutMs);
 
 // ---- FR-A11 Docker 下发请求（backlog A 增加速器/仓库登录字段）----
@@ -906,6 +993,8 @@ public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, s
 
 // ---- 计划任务下发请求（backlog B2 切真）----
 public sealed record CronOpRequest(string? Op, string? Name, string? Schedule, string? Command, int TimeoutMs);
+public sealed record FwOpRequest(string? Op, int? Port, string? Proto, int TimeoutMs);
+public sealed record TamperGuardOpRequest(string? Op, int TimeoutMs);
 
 // ---- 网站下发请求（backlog B2 切真）----
 public sealed record SiteOpRequest(string? Op, string? Name, string? Domains, string? Proxy, int? Port, int TimeoutMs);
@@ -986,6 +1075,18 @@ internal static class CronOpArgs
         if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
         if (!string.IsNullOrEmpty(req.Schedule)) args.Add($"schedule={req.Schedule}");
         if (!string.IsNullOrEmpty(req.Command)) args.Add($"command={req.Command}");
+        return args;
+    }
+}
+
+internal static class FwOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(FwOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (req.Port is { } port) args.Add($"port={port}");
+        if (!string.IsNullOrEmpty(req.Proto)) args.Add($"proto={req.Proto}");
         return args;
     }
 }

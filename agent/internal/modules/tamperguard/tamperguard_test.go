@@ -225,3 +225,31 @@ func TestTamperGuardHandlerStatus(t *testing.T) {
 		t.Fatalf("bogus op should exit 2 with error, got %+v %v", res, err)
 	}
 }
+
+// FR-A17：下发桥仅回传 Output，status 结构化结果必须落 Output JSON（mode/paths/events_written）。
+func TestTamperGuardHandlerStatusOutputJSON(t *testing.T) {
+	dir := t.TempDir()
+	g := NewGuard([]string{"/a", "/b"}, "", filepath.Join(dir, "e.log"), time.Hour)
+	h := Handler(g)
+	res, err := h(map[string]any{"op": "status"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("status op: res=%+v err=%v", res, err)
+	}
+	if res.Output == "" {
+		t.Fatal("Output empty: FR-A17 要求结构化结果落 Output")
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("Output is not valid JSON: %v (output=%q)", err, res.Output)
+	}
+	if parsed["mode"] == nil {
+		t.Fatal("Output JSON missing mode")
+	}
+	paths, ok := parsed["paths"].([]any)
+	if !ok || len(paths) != 2 {
+		t.Fatalf("Output JSON paths = %v, want 2 entries", parsed["paths"])
+	}
+	if _, ok := parsed["events_written"].(float64); !ok {
+		t.Fatalf("Output JSON events_written missing: %v", parsed["events_written"])
+	}
+}

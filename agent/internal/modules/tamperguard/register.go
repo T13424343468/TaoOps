@@ -21,7 +21,8 @@ func Handler(g *Guard) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"status": json.RawMessage(data)}}, nil
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			return registry.Result{ExitCode: 0, Output: string(data), Data: map[string]any{"status": json.RawMessage(data)}}, nil
 		}
 		return registry.Result{ExitCode: 2}, fmt.Errorf("tamperguard: unknown op %q", op)
 	}
