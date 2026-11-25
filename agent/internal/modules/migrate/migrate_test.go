@@ -31,14 +31,21 @@ func newTestManager(t *testing.T) (*Manager, string, string) {
 	return mgr, backupDir, source
 }
 
+
+func newTarget(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "newsite")
+}
+
 func run(m *Manager, args map[string]any) (registry.Result, error) {
 	return m.handle(args)
 }
 
 func TestPrecheckHappyPath(t *testing.T) {
 	mgr, _, source := newTestManager(t)
+	target := newTarget(t)
 	res, err := run(mgr, map[string]any{
-		"op": "precheck", "source_path": source, "target_path": "/srv/newsite",
+		"op": "precheck", "source_path": source, "target_path": target,
 	})
 	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("precheck failed: %v %v", res, err)
@@ -82,8 +89,9 @@ func TestPrecheckRejectsMissingSource(t *testing.T) {
 
 func TestPackWritesArchiveAndMigrateManifest(t *testing.T) {
 	mgr, backupDir, source := newTestManager(t)
+	target := newTarget(t)
 	res, err := run(mgr, map[string]any{
-		"op": "pack", "source_path": source, "target_path": "/srv/newsite", "name": "mysite",
+		"op": "pack", "source_path": source, "target_path": target, "name": "mysite",
 	})
 	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("pack failed: %v %v", res, err)
@@ -100,7 +108,7 @@ func TestPackWritesArchiveAndMigrateManifest(t *testing.T) {
 	if json.Unmarshal(raw, &mm) != nil {
 		t.Fatalf("manifest not parseable: %s", raw)
 	}
-	if mm.SourcePath != source || mm.TargetPath != "/srv/newsite" || mm.SourceVersion != metrics.AgentVersion {
+	if mm.SourcePath != source || mm.TargetPath != target || mm.SourceVersion != metrics.AgentVersion {
 		t.Fatalf("unexpected manifest: %+v", mm)
 	}
 	if mm.Files != 2 || mm.TotalSize != 8 {
@@ -135,7 +143,7 @@ func packOnce(t *testing.T, mgr *Manager, source, target string) string {
 
 func TestRestoreHappyPathWithSnapshot(t *testing.T) {
 	mgr, _, source := newTestManager(t)
-	archive := packOnce(t, mgr, source, "/srv/newsite")
+	archive := packOnce(t, mgr, source, newTarget(t))
 
 	target := filepath.Join(t.TempDir(), "newsite")
 	if err := os.MkdirAll(target, 0o755); err != nil {
@@ -168,10 +176,11 @@ func TestRestoreHappyPathWithSnapshot(t *testing.T) {
 
 func TestRestoreRequiresConfirm(t *testing.T) {
 	mgr, _, source := newTestManager(t)
-	archive := packOnce(t, mgr, source, "/srv/newsite")
+	target := newTarget(t)
+	archive := packOnce(t, mgr, source, target)
 	res, err := run(mgr, map[string]any{
 		"op": "restore", "file": archive,
-		"mapping": `{"target_path": "/srv/newsite"}`,
+		"mapping": `{"target_path": "` + target + `"}`,
 	})
 	if err == nil || !strings.Contains(res.Output, "confirm=true") {
 		t.Fatalf("expected confirm gate, got %v %v", res, err)
@@ -180,17 +189,18 @@ func TestRestoreRequiresConfirm(t *testing.T) {
 
 func TestRestoreRejectsVersionMismatchWithoutForce(t *testing.T) {
 	mgr, _, source := newTestManager(t)
-	archive := packOnce(t, mgr, source, "/srv/newsite")
+	target := newTarget(t)
+	archive := packOnce(t, mgr, source, target)
 	if _, err := run(mgr, map[string]any{
 		"op": "restore", "file": archive,
-		"mapping": `{"target_path": "/srv/newsite"}`, "source_version": "9.9.9", "confirm": "true",
+		"mapping": `{"target_path": "` + target + `"}`, "source_version": "9.9.9", "confirm": "true",
 	}); err == nil {
 		t.Fatal("expected version mismatch rejection")
 	}
 	// force 放行。
 	if res, err := run(mgr, map[string]any{
 		"op": "restore", "file": archive,
-		"mapping": `{"target_path": "/srv/newsite"}`, "source_version": "9.9.9",
+		"mapping": `{"target_path": "` + target + `"}`, "source_version": "9.9.9",
 		"confirm": "true", "force": "true",
 	}); err != nil || res.ExitCode != 0 {
 		t.Fatalf("force restore failed: %v %v", res, err)
@@ -209,7 +219,7 @@ func TestRestoreRejectsArchiveOutsideBackupDir(t *testing.T) {
 
 func TestRestoreRejectsSymlinkEscape(t *testing.T) {
 	mgr, _, source := newTestManager(t)
-	archive := packOnce(t, mgr, source, "/srv/newsite")
+	archive := packOnce(t, mgr, source, newTarget(t))
 	base := t.TempDir()
 	realDir := filepath.Join(base, "real")
 	if err := os.MkdirAll(realDir, 0o755); err != nil {
@@ -229,7 +239,7 @@ func TestRestoreRejectsSymlinkEscape(t *testing.T) {
 
 func TestRestoreSkipsSnapshotForEmptyTarget(t *testing.T) {
 	mgr, _, source := newTestManager(t)
-	archive := packOnce(t, mgr, source, "/srv/newsite")
+	archive := packOnce(t, mgr, source, newTarget(t))
 	target := filepath.Join(t.TempDir(), "fresh")
 	res, err := run(mgr, map[string]any{
 		"op": "restore", "file": archive,

@@ -376,20 +376,29 @@ func (m *Manager) MirrorAdd(addr string) error {
 		return fmt.Errorf("docker: invalid mirror url %q", addr)
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	list, err := m.readMirrors()
 	if err != nil {
+		m.mu.Unlock()
 		return err
 	}
+	dup := false
 	for _, s := range list {
 		if s == addr {
-			return nil // idempotent
+			dup = true // idempotent
+			break
 		}
+	}
+	if dup {
+		m.mu.Unlock()
+		return nil
 	}
 	list = append(list, addr)
 	if err := m.writeMirrors(list); err != nil {
+		m.mu.Unlock()
 		return err
 	}
+	// audit 内部也取 m.mu，须先放锁再落审计（非重入锁，持锁调用即自死锁）。
+	m.mu.Unlock()
 	m.audit("mirror_add", addr, "")
 	return nil
 }
@@ -400,9 +409,9 @@ func (m *Manager) MirrorRemove(addr string) error {
 		return fmt.Errorf("docker: invalid mirror url %q", addr)
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	list, err := m.readMirrors()
 	if err != nil {
+		m.mu.Unlock()
 		return err
 	}
 	out := list[:0]
@@ -415,11 +424,15 @@ func (m *Manager) MirrorRemove(addr string) error {
 		out = append(out, s)
 	}
 	if !found {
+		m.mu.Unlock()
 		return nil
 	}
 	if err := m.writeMirrors(out); err != nil {
+		m.mu.Unlock()
 		return err
 	}
+	// 同 MirrorAdd：先放锁再落审计，避免与 audit 内部加锁自死锁。
+	m.mu.Unlock()
 	m.audit("mirror_remove", addr, "")
 	return nil
 }
