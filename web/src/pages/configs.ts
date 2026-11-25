@@ -160,3 +160,44 @@ export const NODES_PAGE: ModulePageConfig = {
     { label: "安装 Agent", command: "dispatch.install-agent" },
   ],
 };
+
+export const WEBSTATS_PAGE: ModulePageConfig = {
+  title: "网站统计",
+  description: "pg-webstats",
+  columns: [
+    { key: "date", title: "日期" }, { key: "pv", title: "PV" }, { key: "uv", title: "UV（估算）" },
+    { key: "status", title: "状态码分布" }, { key: "bytes", title: "流量" }, { key: "top", title: "Top 来源/URL" },
+  ],
+  rows: [
+    { date: "2026-11-24", pv: "12,480", uv: "1,032", status: "200: 11,900 / 404: 412", bytes: "3.2 GB", top: "1.2.3.4 (320) · /api/list (890)" },
+    { date: "2026-11-23", pv: "11,204", uv: "986", status: "200: 10,780 / 502: 96", bytes: "2.9 GB", top: "5.6.7.8 (271) · /login (744)" },
+  ],
+  commands: [
+    { label: "解析日志", command: "webstats.manage", args: ["op=parse"] },
+    { label: "查询汇总", command: "webstats.manage", args: ["op=summary"] },
+    { label: "导出报表", command: "webstats.manage", args: ["op=export"] },
+    { label: "清空统计", command: "webstats.manage", args: ["op=clear"] },
+  ],
+};
+
+export const DOCKER_PAGE: ModulePageConfig = {
+  title: "Docker 管理",
+  description: "pg-docker",
+  columns: [
+    { key: "name", title: "容器" }, { key: "image", title: "镜像" }, { key: "state", title: "状态" },
+    { key: "ports", title: "端口" }, { key: "status", title: "运行详情" },
+  ],
+  rows: [
+    { name: "web", image: "nginx:1.25", state: "running", ports: "80/tcp", status: "Up 2 hours" },
+    { name: "db", image: "mysql:8.0", state: "exited", ports: "3306/tcp", status: "Exited (0) 3 hours ago" },
+  ],
+  commands: [
+    { label: "启动", command: "docker.manage", args: ["op=start"] },
+    { label: "停止", command: "docker.manage", args: ["op=stop"] },
+    { label: "重启", command: "docker.manage", args: ["op=restart"] },
+    { label: "日志", command: "docker.manage", args: ["op=logs"] },
+    { label: "进终端", command: "docker.manage", args: ["op=terminal"] },
+    { label: "拉取镜像", command: "docker.manage", args: ["op=image_pull"] },
+    { label: "删除镜像", command: "docker.manage", args: ["op=image_remove"] },
+  ],
+};

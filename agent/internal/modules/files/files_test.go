@@ -1,10 +1,12 @@
 package files
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPutChunkAndFinish(t *testing.T) {
@@ -157,5 +159,123 @@ func TestHandlerOps(t *testing.T) {
 	}
 	if !strings.Contains(a.Root, "s") {
 		t.Fatal("unexpected assembler root")
+	}
+}
+
+func TestReadTextFileOK(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "nginx.conf")
+	os.WriteFile(p, []byte("server {\n}\n"), 0o644)
+	got, err := ReadTextFile(p)
+	if err != nil || got != "server {\n}\n" {
+		t.Fatalf("ReadTextFile = %q err=%v", got, err)
+	}
+}
+
+func TestReadTextFileSizeLimit(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "big.log")
+	os.WriteFile(p, make([]byte, EditMaxBytes+1), 0o644)
+	if _, err := ReadTextFile(p); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversize read should fail with explicit error, got %v", err)
+	}
+}
+
+func TestReadTextFileBinaryRejected(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "bin.dat")
+	os.WriteFile(p, []byte("ab\x00cd"), 0o644)
+	if _, err := ReadTextFile(p); err == nil || !strings.Contains(err.Error(), "binary") {
+		t.Fatalf("binary read should fail with explicit error, got %v", err)
+	}
+}
+
+func TestEditPathValidation(t *testing.T) {
+	if _, err := ReadTextFile("relative/path.txt"); err == nil {
+		t.Fatal("relative path should fail")
+	}
+	if _, err := ReadTextFile("/etc/../etc/passwd"); err == nil {
+		t.Fatal(".. segment should fail")
+	}
+	if _, err := ReadTextFile("/etc//passwd"); err == nil {
+		t.Fatal("non-canonical path should fail")
+	}
+	// symlink escape: /tmp link component
+	link := filepath.Join(t.TempDir(), "link")
+	target := t.TempDir()
+	os.Symlink(target, link)
+	if _, err := ReadTextFile(filepath.Join(link, "x.txt")); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("symlink component should fail, got %v", err)
+	}
+}
+
+func TestWriteTextFileBackupRotation(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "app.conf")
+	base := time.Unix(1_700_000_000, 0)
+	if err := WriteTextFile(p, "v1", base); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	// overwrite existing file 6 times -> keep 5 backups
+	for i := 0; i < 6; i++ {
+		if err := WriteTextFile(p, fmt.Sprintf("v%d", i+2), base.Add(time.Duration(i+1)*time.Second)); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
+	}
+	got, _ := os.ReadFile(p)
+	if string(got) != "v7" {
+		t.Fatalf("content = %q", string(got))
+	}
+	baks, _ := filepath.Glob(p + ".bak.*")
+	if len(baks) != BackupKeep {
+		t.Fatalf("backups = %d, want %d (%v)", len(baks), BackupKeep, baks)
+	}
+	// oldest (ts=...001) pruned, newest (...006) kept
+	os.ReadFile(filepath.Join(dir, "app.conf.bak.1700000006"))
+	if _, err := os.Stat(p + ".bak.1700000001"); !os.IsNotExist(err) {
+		t.Fatal("oldest backup should be pruned")
+	}
+	if _, err := os.Stat(p + ".bak.1700000006"); err != nil {
+		t.Fatalf("newest backup missing: %v", err)
+	}
+}
+
+func TestWriteTextFilePreservesMode(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "script.sh")
+	os.WriteFile(p, []byte("#!/bin/sh\n"), 0o755)
+	if err := WriteTextFile(p, "#!/bin/sh\necho hi\n", time.Unix(1_700_000_000, 0)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	fi, _ := os.Stat(p)
+	if fi.Mode().Perm() != 0o755 {
+		t.Fatalf("mode = %v, want 0755", fi.Mode())
+	}
+}
+
+func TestWriteTextFileBinaryAndSizeRejected(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "f")
+	if err := WriteTextFile(p, "a\x00b", time.Unix(1_700_000_000, 0)); err == nil || !strings.Contains(err.Error(), "binary") {
+		t.Fatalf("binary write should fail, got %v", err)
+	}
+	if err := WriteTextFile(p, strings.Repeat("x", int(EditMaxBytes)+1), time.Unix(1_700_000_000, 0)); err == nil || !strings.Contains(err.Error(), "exceeds") {
+		t.Fatalf("oversize write should fail, got %v", err)
+	}
+}
+
+func TestHandlerFileEditOps(t *testing.T) {
+	root := t.TempDir()
+	h := Handler(NewAssembler(filepath.Join(root, "s")))
+	p := filepath.Join(root, "a.conf")
+	if _, err := h(map[string]any{"op": "file_write", "path": p, "content": "k=v"}); err != nil {
+		t.Fatalf("file_write: %v", err)
+	}
+	res, err := h(map[string]any{"op": "file_read", "path": p})
+	if err != nil || res.Output != "k=v" {
+		t.Fatalf("file_read: %q err=%v", res.Output, err)
+	}
+	if _, err := h(map[string]any{"op": "file_read", "path": "nope"}); err == nil {
+		t.Fatal("relative path should fail")
 	}
 }

@@ -32,9 +32,11 @@ func New(r *registry.Registry) *Dispatcher { return &Dispatcher{reg: r} }
 
 // Execute runs command with args under ctx and returns (exitCode, output).
 // Module commands receive args as key=value pairs; unknown commands exit 127.
-func (d *Dispatcher) Execute(ctx context.Context, command string, args []string) (int32, string) {
+// blob carries an optional binary payload (FR-A13 relay chunks); when
+// non-empty it is surfaced to the module handler as args["__blob"].
+func (d *Dispatcher) Execute(ctx context.Context, command string, args []string, blob []byte) (int32, string) {
 	if h, ok := d.reg.Get(command); ok {
-		return d.runModule(ctx, command, h, args)
+		return d.runModule(ctx, command, h, args, blob)
 	}
 	if ShellWhitelist[command] {
 		return runShell(ctx, command, args)
@@ -42,10 +44,13 @@ func (d *Dispatcher) Execute(ctx context.Context, command string, args []string)
 	return 127, fmt.Sprintf("unknown command: %s", command)
 }
 
-func (d *Dispatcher) runModule(ctx context.Context, command string, h registry.Handler, args []string) (int32, string) {
+func (d *Dispatcher) runModule(ctx context.Context, command string, h registry.Handler, args []string, blob []byte) (int32, string) {
 	moduleArgs, skipped := parseKeyValues(args)
 	if len(skipped) > 0 {
 		return 2, fmt.Sprintf("dispatch: %s: args without '=' ignored: %s", command, strings.Join(skipped, ", "))
+	}
+	if len(blob) > 0 {
+		moduleArgs["__blob"] = blob
 	}
 
 	type outcome struct {

@@ -14,6 +14,8 @@ public sealed class WafEvent
     public string RuleName { get; set; } = "";
     public string Ip { get; set; } = "";
     public string Uri { get; set; } = "";
+    /// <summary>归一化后的 URI（Lua 侧匹配副本）：与原始 Uri 双值对账，便于回溯误报。</summary>
+    public string NormUri { get; set; } = "";
     /// <summary>事件时间（Unix 毫秒）：优先取日志行自带 ts，缺省取入库时刻。</summary>
     public long Ts { get; set; }
 }
@@ -79,6 +81,7 @@ public sealed class WafEventStore
                 RuleName = GetStr("rule_name"),
                 Ip = GetStr("ip"),
                 Uri = GetStr("uri"),
+                NormUri = GetStr("norm_uri"),
                 Ts = root.TryGetProperty("ts", out var ts) && ts.ValueKind == JsonValueKind.Number
                     ? ts.GetInt64() : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             };

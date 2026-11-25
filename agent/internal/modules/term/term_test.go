@@ -89,3 +89,36 @@ func TestHandlerOps(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 }
+
+func TestAttachContainer(t *testing.T) {
+	m := NewManager()
+	h := Handler(m)
+	res, err := h(map[string]any{"op": "attach_container", "container": "web"})
+	if err != nil {
+		t.Fatalf("attach_container: %v", err)
+	}
+	id, _ := res.Data["id"].(string)
+	token, _ := res.Data["token"].(string)
+	container, _ := res.Data["container"].(string)
+	if id == "" || token == "" || container != "web" {
+		t.Fatalf("data = %+v", res.Data)
+	}
+	// 会话路由不变：reconnect/exec 沿用同一 session_id。
+	if _, err := h(map[string]any{"op": "reconnect", "id": id, "token": token}); err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	if _, err := h(map[string]any{"op": "close", "id": id}); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+}
+
+func TestAttachContainerValidation(t *testing.T) {
+	m := NewManager()
+	h := Handler(m)
+	if _, err := h(map[string]any{"op": "attach_container", "container": "-bad/name"}); err == nil {
+		t.Fatal("invalid container name should fail")
+	}
+	if _, err := h(map[string]any{"op": "attach_container"}); err == nil {
+		t.Fatal("missing container should fail")
+	}
+}

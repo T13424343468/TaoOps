@@ -16,7 +16,8 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
     {
         "sysinfo.overview", "site.manage", "db.manage", "files.manage", "term.manage",
         "cron.manage", "env.manage", "fw.manage", "backup.manage", "ftp.manage",
-        "sec.manage",
+        "sec.manage", "docker.manage", "webstats.manage", "migrate.manage", "lb.manage",
+        "logclean.manage", "ssl.manage", "app.deploy",
     };
     private static readonly char[] ForbiddenChars = { ';', '|', '&', '`', '$' };
 
@@ -27,14 +28,28 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
     private readonly NodeCommandHub _hub;
     private readonly NodeStreamHub _streams;
     private readonly ILogger<AgentService> _logger;
+    /// <summary>统一告警中心（FR-A19）：心跳磁盘水位接线；测试直构时可为空。</summary>
+    private readonly Alerts.AlertCenter? _alerts;
+    /// <summary>节点间备份中转（FR-A13）：源端分片流转发；测试直构时可注入。</summary>
+    private readonly Relay.RelayHub _relay;
 
-    public AgentService(NodeRegistry registry, NodeCommandHub hub, NodeStreamHub streams, ILogger<AgentService> logger)
+    public AgentService(NodeRegistry registry, NodeCommandHub hub, NodeStreamHub streams,
+        ILogger<AgentService> logger, Alerts.AlertCenter? alerts = null, Relay.RelayHub? relay = null)
     {
         _registry = registry;
         _hub = hub;
         _streams = streams;
         _logger = logger;
+        _alerts = alerts;
+        _relay = relay ?? new Relay.RelayHub(hub, alerts);
     }
+
+    /// <summary>节点间备份中转（FR-A13，契约 §7）：源端推流分片，中控转发至目标节点。</summary>
+    public override Task BackupRelay(
+        IAsyncStreamReader<RelayChunk> requestStream,
+        IServerStreamWriter<RelayAck> responseStream,
+        ServerCallContext context)
+        => _relay.HandleStream(requestStream, responseStream, context);
 
     public override Task<RegisterResponse> Register(RegisterRequest request, ServerCallContext context)
     {
@@ -62,6 +77,9 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
             var msg = requestStream.Current;
             if (!_registry.Touch(msg.NodeId))
                 throw new RpcException(new Status(StatusCode.NotFound, $"unknown node_id {msg.NodeId}"));
+
+            // FR-A19：磁盘水位接线（≥90% 边缘触发 critical，<85% 迟滞复位）。
+            _alerts?.CheckDiskWatermark(msg.NodeId, msg.Disk, msg.Ts > 0 ? msg.Ts : null);
 
             await responseStream.WriteAsync(new HeartbeatAck { Ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
                 context.CancellationToken);
@@ -156,6 +174,11 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
             }
             catch (OperationCanceledException) { }
             catch (RpcException) { }
+            finally
+            {
+                // 请求流收尾（Agent 断开）即关闭写侧，让下行泵自然退出，不必等外部取消。
+                session.Outbound.Writer.TryComplete();
+            }
         }, CancellationToken.None);
 
         try
@@ -183,6 +206,11 @@ public class AgentService : Grpc.AgentService.AgentServiceBase
             }
             catch (OperationCanceledException) { }
             catch (RpcException) { }
+            finally
+            {
+                // 请求流收尾（Agent 断开）即关闭写侧，让下行泵自然退出，不必等外部取消。
+                session.Outbound.Writer.TryComplete();
+            }
         }, CancellationToken.None);
 
         try

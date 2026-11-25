@@ -5,6 +5,7 @@
 package sysinfo
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
@@ -162,14 +163,50 @@ func parseNetDev(s string) []NetIface {
 	return out
 }
 
-// Handler returns the registry handler "sysinfo.overview".
+// Handler returns the registry handler "sysinfo.overview". op dispatches:
+// empty/"overview" keeps the FR-A1 overview; "metrics_sample" (FR-A23)
+// returns one metrics snapshot as JSON; "process_top" returns the top-N
+// processes (args.n, default 10) as JSON. Results follow the module
+// convention of a JSON payload in Output.
 func Handler(c *Collector) registry.Handler {
 	return func(args map[string]any) (registry.Result, error) {
-		data, err := c.Collect()
-		if err != nil {
-			return registry.Result{ExitCode: 1}, fmt.Errorf("sysinfo: %w", err)
+		op, _ := args["op"].(string)
+		switch op {
+		case "", "overview":
+			data, err := c.Collect()
+			if err != nil {
+				return registry.Result{ExitCode: 1}, fmt.Errorf("sysinfo: %w", err)
+			}
+			return registry.Result{ExitCode: 0, Output: "ok", Data: data}, nil
+		case "metrics_sample":
+			s, err := MetricsSample(c)
+			if err != nil {
+				return registry.Result{ExitCode: 1}, fmt.Errorf("sysinfo: %w", err)
+			}
+			out, err := json.Marshal(s)
+			if err != nil {
+				return registry.Result{ExitCode: 1}, fmt.Errorf("sysinfo: %w", err)
+			}
+			return registry.Result{ExitCode: 0, Output: string(out)}, nil
+		case "process_top":
+			n := 10
+			switch v := args["n"].(type) {
+			case string:
+				if x, err := strconv.Atoi(v); err == nil && x > 0 {
+					n = x
+				}
+			case float64:
+				if v > 0 {
+					n = int(v)
+				}
+			}
+			out, err := json.Marshal(ProcessTop(c, n))
+			if err != nil {
+				return registry.Result{ExitCode: 1}, fmt.Errorf("sysinfo: %w", err)
+			}
+			return registry.Result{ExitCode: 0, Output: string(out)}, nil
 		}
-		return registry.Result{ExitCode: 0, Output: "ok", Data: data}, nil
+		return registry.Result{ExitCode: 2}, fmt.Errorf("sysinfo: unknown op %q (want overview|metrics_sample|process_top)", op)
 	}
 }
 

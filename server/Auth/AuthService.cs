@@ -60,8 +60,17 @@ public sealed class AuthService
         if (parts.Length != 4 || parts[0] != "pbkdf2-sha256") return false;
         var iterations = int.TryParse(parts[1], out var it) ? it : 0;
         if (iterations <= 0) return false;
-        var salt = Convert.FromBase64String(parts[2]);
-        var expect = Convert.FromBase64String(parts[3]);
+        byte[] salt, expect;
+        try
+        {
+            salt = Convert.FromBase64String(parts[2]);
+            expect = Convert.FromBase64String(parts[3]);
+        }
+        catch (FormatException)
+        {
+            // 账本被篡改或损坏的哈希串：校验失败即拒登，不向外抛异常。
+            return false;
+        }
         var actual = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, System.Security.Cryptography.HashAlgorithmName.SHA256, expect.Length);
         return CryptographicOperations.FixedTimeEquals(actual, expect);
     }
@@ -130,6 +139,15 @@ public sealed class AuthService
                 Failures = window.Count,
             });
             _failures.Remove(username);
+        }
+    }
+
+    /// <summary>记录一次校验失败（FR-A16：TOTP 二次校验失败走同一锁定通道）。</summary>
+    public void RecordFailure(string username, long nowMs)
+    {
+        lock (_lock)
+        {
+            CountFailure(username, nowMs);
         }
     }
 

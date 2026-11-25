@@ -23,7 +23,7 @@ func TestExecute_ModuleCommand_RoutesToRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := New(r)
-	code, out := d.Execute(context.Background(), "echo.manage", []string{"op=list"})
+	code, out := d.Execute(context.Background(), "echo.manage", []string{"op=list"}, nil)
 	if code != 0 || out != "ok" {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
@@ -37,7 +37,7 @@ func TestExecute_ModuleCommand_ErrorKeepsExitCode(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := New(r)
-	code, out := d.Execute(context.Background(), "x.manage", nil)
+	code, out := d.Execute(context.Background(), "x.manage", nil, nil)
 	if code != 3 || !strings.Contains(out, "boom") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
@@ -51,7 +51,7 @@ func TestExecute_ModuleCommand_ZeroExitOnErrorBecomesOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := New(r)
-	code, _ := d.Execute(context.Background(), "y.manage", nil)
+	code, _ := d.Execute(context.Background(), "y.manage", nil, nil)
 	if code != 1 {
 		t.Fatalf("code=%d, want 1", code)
 	}
@@ -65,7 +65,7 @@ func TestExecute_ModuleCommand_MissingEqualsSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := New(r)
-	code, out := d.Execute(context.Background(), "nothere.manage", []string{"op", "k=v"})
+	code, out := d.Execute(context.Background(), "nothere.manage", []string{"op", "k=v"}, nil)
 	if code != 2 || !strings.Contains(out, "op") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
@@ -82,7 +82,7 @@ func TestExecute_ModuleCommand_Timeout(t *testing.T) {
 	d := New(r)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	code, out := d.Execute(ctx, "slow.manage", nil)
+	code, out := d.Execute(ctx, "slow.manage", nil, nil)
 	if code != 124 || !strings.Contains(out, "timed out") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
@@ -90,7 +90,7 @@ func TestExecute_ModuleCommand_Timeout(t *testing.T) {
 
 func TestExecute_ShellWhitelist_Echo(t *testing.T) {
 	d := New(registry.New())
-	code, out := d.Execute(context.Background(), "echo", []string{"hello", "world"})
+	code, out := d.Execute(context.Background(), "echo", []string{"hello", "world"}, nil)
 	if code != 0 || strings.TrimSpace(out) != "hello world" {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
@@ -98,7 +98,7 @@ func TestExecute_ShellWhitelist_Echo(t *testing.T) {
 
 func TestExecute_UnknownCommand_Exit127(t *testing.T) {
 	d := New(registry.New())
-	code, out := d.Execute(context.Background(), "rm", []string{"-rf"})
+	code, out := d.Execute(context.Background(), "rm", []string{"-rf"}, nil)
 	if code != 127 || !strings.Contains(out, "unknown command") {
 		t.Fatalf("code=%d out=%q", code, out)
 	}
@@ -107,7 +107,7 @@ func TestExecute_UnknownCommand_Exit127(t *testing.T) {
 func TestExecute_ShellInjectionCharsInert(t *testing.T) {
 	d := New(registry.New())
 	// echo 不经 shell，注入字符作为普通参数原样输出
-	code, out := d.Execute(context.Background(), "echo", []string{"a;b|c"})
+	code, out := d.Execute(context.Background(), "echo", []string{"a;b|c"}, nil)
 	if code != 0 || strings.TrimSpace(out) != "a;b|c" {
 		t.Fatalf("code=%d out=%q", code, out)
 	}

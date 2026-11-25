@@ -15,6 +15,8 @@ service AgentService {
   rpc TermStream(stream TermData) returns (stream TermData);
   // 日志流（M2）：Agent 发送日志块，接收订阅控制（中控按控制台请求转发）。
   rpc LogStream(stream LogChunk) returns (stream LogControl);
+  // 节点间备份中转（FR-A13）：源端 Agent 推流分片，中控校验后转发至目标节点。
+  rpc BackupRelay(stream RelayChunk) returns (stream RelayAck);
 }
 
 message RegisterRequest {
@@ -54,6 +56,7 @@ message DispatchRequest {
   repeated string args = 3;
   int32 timeout_ms = 4;
   string request_id = 5;
+  bytes blob = 6; // FR-A13：节点间备份中转分片字节（backup.manage op=relay_put）
 }
 
 message DispatchResult {
@@ -79,6 +82,31 @@ message LogChunk {
 // 日志订阅控制（M2）：中控下发给 Agent 的订阅/退订指令。
 message LogControl {
   string action = 1;
-  string path = 2;
+  string path = 2; // target=file 时为日志文件绝对路径；target=container 时为容器名
   int32 tail_lines = 3;
+  string target = 4; // file（默认）| container（FR-A11 容器日志回流）
+}
+
+// 节点间备份中转分片（FR-A13）：源端 → 中控。
+message RelayChunk {
+  string relay_id = 1;
+  string target_node_id = 2;
+  string upload_id = 3;
+  string name = 4;          // 备份名（relay_begin 用）
+  int64 chunk_index = 5;
+  int64 total_size = 6;     // 备份包声明大小（目标端磁盘预检）
+  int64 chunk_count = 7;
+  string file_sha256 = 8;   // 整包 SHA-256（最终完整性确认）
+  string chunk_sha256 = 9;  // 本分片 SHA-256
+  bytes data = 10;          // ≤4MB（files.ChunkSize）
+  bool eof = 11;            // 末分片标记，请求整包校验
+  string source = 12;       // 源端原始备份来源路径（目标端 manifest 记录，跨节点还原用）
+}
+
+// 节点间备份中转回执（FR-A13）：中控 → 源端。
+message RelayAck {
+  int64 chunk_index = 1;
+  bool ok = 2;
+  string error = 3;
+  int64 relayed_bytes = 4;  // 中控累计中转字节（流量统计）
 }

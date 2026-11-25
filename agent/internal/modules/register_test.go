@@ -19,22 +19,29 @@ func TestRegisterAllInstallsEveryModule(t *testing.T) {
 		AuditPath:  filepath.Join(dir, "audit.log"),
 	}
 	r := registry.New()
-	if err := RegisterAll(r, p); err != nil {
+	if _, err := RegisterAll(r, p); err != nil {
 		t.Fatalf("RegisterAll: %v", err)
 	}
 	want := []string{
+		"app.deploy",
 		"backup.manage",
 		"cron.manage",
 		"db.manage",
+		"docker.manage",
 		"env.manage",
 		"files.manage",
 		"ftp.manage",
 		"fw.manage",
+		"lb.manage",
+		"logclean.manage",
+		"migrate.manage",
 		"sec.manage",
 		"site.manage",
+		"ssl.manage",
 		"sysinfo.overview",
 		"tamper.guard",
 		"term.manage",
+		"webstats.manage",
 	}
 	got := r.Names()
 	if len(got) != len(want) {
@@ -51,13 +58,13 @@ func TestRegisterAllTwiceIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	p := Paths{AuditPath: filepath.Join(dir, "a.log")}
 	r := registry.New()
-	if err := RegisterAll(r, p); err != nil {
+	if _, err := RegisterAll(r, p); err != nil {
 		t.Fatalf("first RegisterAll: %v", err)
 	}
-	if err := RegisterAll(r, p); err != nil {
+	if _, err := RegisterAll(r, p); err != nil {
 		t.Fatalf("second RegisterAll: %v", err)
 	}
-	if len(r.Names()) != 12 {
+	if len(r.Names()) != 19 {
 		t.Fatalf("names = %v", r.Names())
 	}
 }

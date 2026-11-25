@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"taoops/agent/internal/modules/registry"
 )
@@ -29,8 +30,8 @@ type Assembler struct {
 func NewAssembler(root string) *Assembler { return &Assembler{Root: root} }
 
 type chunkManifest struct {
-	Name     string `json:"name"`
-	Total    int64  `json:"total"`
+	Name     string  `json:"name"`
+	Total    int64   `json:"total"`
 	Received []int64 `json:"received"` // chunk indexes present
 }
 
@@ -276,6 +277,20 @@ func Handler(a *Assembler) registry.Handler {
 			path, _ := args["path"].(string)
 			content, _ := args["content"].(string)
 			if err := WriteFile(path, content); err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: "saved"}, nil
+		case "file_read": // FR-A25: online edit read (≤1MB, binary rejected)
+			path, _ := args["path"].(string)
+			content, err := ReadTextFile(path)
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			return registry.Result{ExitCode: 0, Output: content}, nil
+		case "file_write": // FR-A25: online edit write (≤1MB, binary rejected, .bak.<ts> keep 5)
+			path, _ := args["path"].(string)
+			content, _ := args["content"].(string)
+			if err := WriteTextFile(path, content, time.Now()); err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
 			return registry.Result{ExitCode: 0, Output: "saved"}, nil

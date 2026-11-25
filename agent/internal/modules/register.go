@@ -7,23 +7,31 @@ import (
 	"os"
 	"path/filepath"
 
+	"taoops/agent/internal/modules/appdeploy"
 	"taoops/agent/internal/modules/backup"
 	"taoops/agent/internal/modules/cron"
 	"taoops/agent/internal/modules/db"
+	"taoops/agent/internal/modules/docker"
 	"taoops/agent/internal/modules/env"
 	"taoops/agent/internal/modules/files"
 	"taoops/agent/internal/modules/ftp"
 	"taoops/agent/internal/modules/fw"
+	"taoops/agent/internal/modules/lb"
+	"taoops/agent/internal/modules/logclean"
+	"taoops/agent/internal/modules/migrate"
 	"taoops/agent/internal/modules/registry"
 	"taoops/agent/internal/modules/secguard"
-	"taoops/agent/internal/modules/tamperguard"
 	"taoops/agent/internal/modules/site"
+	"taoops/agent/internal/modules/ssl"
 	"taoops/agent/internal/modules/sysinfo"
+	"taoops/agent/internal/modules/tamperguard"
 	"taoops/agent/internal/modules/term"
+	"taoops/agent/internal/modules/webstats"
 )
 
 // Paths groups the runtime directories the modules need.
 type Paths struct {
+	DataDir    string
 	ConfDir    string
 	BackupDir  string
 	SessionDir string
@@ -33,8 +41,10 @@ type Paths struct {
 	AuditPath  string
 }
 
-// RegisterAll installs every base-layer module handler into r.
-func RegisterAll(r *registry.Registry, p Paths) error {
+// RegisterAll installs every base-layer module handler into r and returns
+// the backup manager so main can wire the FR-A13 relay sender.
+func RegisterAll(r *registry.Registry, p Paths) (*backup.Manager, error) {
+	backupMgr := backup.NewManager(p.BackupDir)
 	steps := []struct {
 		name string
 		fn   func() error
@@ -42,24 +52,33 @@ func RegisterAll(r *registry.Registry, p Paths) error {
 		{"sysinfo", func() error { return sysinfo.Register(r, sysinfo.NewCollector()) }},
 		{"site", func() error { return site.Register(r, site.NewManager(p.ConfDir, p.BackupDir)) }},
 		{"db", func() error { return db.Register(r, db.NewManager(p.BackupDir)) }},
+		{"docker", func() error { return docker.Register(r, docker.NewManager(filepath.Join(p.LogDir, "docker.audit"))) }},
+		{"appdeploy", func() error { return appdeploy.Register(r, appdeploy.NewManager(filepath.Join(p.DataDir, "apps"), filepath.Join(p.LogDir, "appdeploy.audit"))) }},
 		{"files", func() error { return files.Register(r, files.NewAssembler(p.SessionDir)) }},
 		{"term", func() error { return term.Register(r, term.NewManager()) }},
 		{"cron", func() error { return cron.Register(r, cron.NewManager(p.LogDir)) }},
 		{"env", func() error { return env.Register(r, env.NewManager(p.PackageDir, p.InstallDir)) }},
 		{"fw", func() error { return fw.Register(r, fw.NewManager(p.AuditPath)) }},
+		{"lb", func() error { return lb.Register(r, lb.NewManager(p.ConfDir, filepath.Join(p.LogDir, "lb.audit"))) }},
+		{"logclean", func() error { return logclean.Register(r, logclean.NewManager(p.DataDir)) }},
+		{"ssl", func() error { return ssl.Register(r, ssl.NewManager(p.DataDir)) }},
 		{"ftp", func() error { return ftp.Register(r, ftp.NewManager(filepath.Join(p.ConfDir, "ftp.json"))) }},
-		{"backup", func() error { return backup.Register(r, backup.NewManager(p.BackupDir)) }},
+		{"backup", func() error { return backup.Register(r, backupMgr) }},
+		{"migrate", func() error { return migrate.Register(r, migrate.NewManager(backupMgr)) }},
 		{"secguard", func() error {
 			return secguard.Register(r, secguard.NewManager(secguard.FromEnv(filepath.Join(p.ConfDir, "secguard.json"))))
 		}},
 		{"tamperguard", func() error {
 			return tamperguard.Register(r, tamperguard.NewGuard(tamperguard.ParsePaths(os.Getenv("TAOOPS_TAMPER_PATHS")), os.Getenv("TAOOPS_TAMPER_BPF_PIN"), "", 0))
 		}},
+		{"webstats", func() error {
+			return webstats.Register(r, webstats.NewManager(filepath.Join(p.LogDir, "webstats")))
+		}},
 	}
 	for _, s := range steps {
 		if err := s.fn(); err != nil {
-			return fmt.Errorf("modules: register %s: %w", s.name, err)
+			return nil, fmt.Errorf("modules: register %s: %w", s.name, err)
 		}
 	}
-	return nil
+	return backupMgr, nil
 }

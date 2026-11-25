@@ -16,21 +16,30 @@ const NAV = [
   { key: "g-site", label: "站点与应用", children: [
     { key: "/site", label: "网站" },
     { key: "/db", label: "数据库" },
+    { key: "/db-replica", label: "主从复制" },
     { key: "/files", label: "文件" },
     { key: "/ftp", label: "FTP" },
     { key: "/cron", label: "计划任务" },
     { key: "/env", label: "环境变量" },
+    { key: "/docker", label: "Docker 管理" },
+    { key: "/apps", label: "应用部署" },
+    { key: "/k8s", label: "K8s 集群" },
+    { key: "/webstats", label: "网站统计" },
+    { key: "/backup", label: "备份还原" },
+    { key: "/migrate", label: "一键迁移" },
     { key: "/lb", label: "负载均衡" },
     { key: "/ssl", label: "SSL 证书" },
   ]},
   { key: "g-sec", label: "安全", children: [
     { key: "/waf", label: "WAF 防火墙" },
     { key: "/audit", label: "权限与审计" },
+    { key: "/totp", label: "两步验证" },
   ]},
   { key: "g-ops", label: "运维", children: [
     { key: "/ai", label: "AI 运维" },
     { key: "/upgrade", label: "升级与规则包" },
     { key: "/push", label: "告警推送" },
+    { key: "/logclean", label: "日志清理" },
   ]},
 ];
 
