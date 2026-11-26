@@ -278,7 +278,7 @@ public sealed class K8sClusterService(KubeClusterStore store, IK8sClientFactory 
         using var client = Client(cluster);
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var patch = new V1Patch(
-            "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"taoops.io/restartedAt\":\"" + now + "\"}}}}}}",
+            "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"taoops.io/restartedAt\":\"" + now + "\"}}}}}",
             V1Patch.PatchType.StrategicMergePatch);
         client.AppsV1.PatchNamespacedDeployment(patch, deployment, ns);
     }
