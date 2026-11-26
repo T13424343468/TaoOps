@@ -6,6 +6,9 @@
         <Configuration>
           <Format>cobertura</Format>
           <Include>[TaoOps.Server]*</Include>
+          <!-- 生成代码不计账（老板 2026-11-26 拍板「排除生成代码」）：
+               obj/proto/Agent.cs 的 gRPC 消息与 AgentGrpc、RegexGenerator.g.cs 正则生成器。 -->
+          <Exclude>[TaoOps.Server]TaoOps.Server.Grpc.*,[TaoOps.Server]System.Text.RegularExpressions.Generated.*</Exclude>
           <SkipAutoProperties>true</SkipAutoProperties>
         </Configuration>
       </DataCollector>
