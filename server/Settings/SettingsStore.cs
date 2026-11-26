@@ -57,4 +57,8 @@ public sealed class AlertThresholdSettings
 {
     public int DiskCriticalPct { get; set; } = 90;
     public int DiskResetPct { get; set; } = 85;
+    /// <summary>FR-A29：CPU 峰值建议阈值（%），与磁盘阈值同页配置。</summary>
+    public int CpuPercent { get; set; } = 85;
+    /// <summary>FR-A29：内存峰值建议阈值（%）。</summary>
+    public int MemPercent { get; set; } = 85;
 }

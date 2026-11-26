@@ -17,6 +17,8 @@ builder.Services.AddSingleton<NodeRegistry>();
 builder.Services.AddSingleton<NodeCommandHub>();
 builder.Services.AddSingleton<NodeStreamHub>();
 builder.Services.AddSingleton<NodeCommandBridge>();
+// FR-A30 多机批量下发（PRD v1.4）。
+builder.Services.AddSingleton<BatchService>();
 
 // WAF 管理面（M3）：规则真源与事件账本落数据目录。
 var wafDataDir = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR") ?? "/var/lib/taoops/server";
@@ -84,6 +86,14 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<BackupScheduleMoni
 // FR-A23 资源实时监控：60s 对在线节点采样 sysinfo.overview op=metrics_sample，
 // 入内存环形缓冲（24h×60s=1440 点，不落盘重启清零），采样失败静默。
 builder.Services.AddSingleton<MetricsStore>();
+// FR-A29 AI 运维建议（PRD v1.4）：只读门面 + 规则引擎 + 外接模式。
+builder.Services.AddSingleton<AiAdviceExternal>(_ => new AiAdviceExternal(wafDataDir,
+    new AuditStore(wafDataDir)));
+builder.Services.AddSingleton<AdviceEngine>();
+builder.Services.AddSingleton<IAdviceDataSource>(sp => new DefaultAdviceDataSource(
+    sp.GetRequiredService<MetricsStore>(),
+    sp.GetRequiredService<AlertStore>(),
+    sp.GetRequiredService<NodeCommandBridge>()));
 builder.Services.AddSingleton<MetricsSampler>(sp => new MetricsSampler(
     sp.GetRequiredService<NodeCommandBridge>(),
     () => sp.GetRequiredService<NodeCommandBridge>().ListNodes().Select(n => (n.NodeId, n.CommandConnected)),
@@ -452,6 +462,112 @@ app.MapGet("/api/nodes/{id}/metrics", (string id, MetricsStore store, int? hours
     var since = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - h * 3_600_000L;
     return Results.Json(store.Query(id, since));
 });
+// FR-A29 AI 运维建议（PRD v1.4）：本地规则引擎按节点出建议；查看 ReadOnly 及以上。
+app.MapGet("/api/advice/{id}", async (string id, HttpContext http, AdviceEngine engine,
+    IAdviceDataSource source, SettingsStore settings) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || role < UserRole.ReadOnly)
+        return Results.Json(new { error = "insufficient role" }, statusCode: 403);
+    var advices = await engine.AdviseAsync(id, settings.Load());
+    return Results.Json(new
+    {
+        node_id = id,
+        advices = advices.Select(a => new
+        {
+            id = a.Id, level = a.Level, title = a.Title,
+            basis = a.Basis, action_link = a.ActionLink, action_text = a.ActionText,
+        }),
+    });
+});
+
+// FR-A29 外接模式配置（Admin）：Key 不回显，只返回 has_key 状态。
+app.MapGet("/api/advice/external/config", (HttpContext http, AiAdviceExternal ext) =>
+{
+    var cfgRole = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(cfgRole, out var cfgParsed) || cfgParsed != UserRole.Admin)
+        return Results.Json(new { error = "admin only" }, statusCode: 403);
+    var (endpoint, hasKey, whitelist) = ext.LoadConfigSafe();
+    return Results.Json(new { endpoint, has_key = hasKey, ssrf_whitelist = whitelist });
+});
+app.MapPost("/api/advice/external/config", (ExternalConfigRequest req, HttpContext http, AiAdviceExternal ext) =>
+{
+    var saveRole = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(saveRole, out var saveParsed) || saveParsed != UserRole.Admin)
+        return Results.Json(new { error = "admin only" }, statusCode: 403);
+    try
+    {
+        ext.SaveConfig(new AiAdviceExternal.ExternalConfig(
+            req.Endpoint ?? "", req.ApiKey ?? "", req.SsrfWhitelist ?? []));
+        return Results.Json(new { ok = true });
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: 400);
+    }
+});
+
+// FR-A29 深度分析（Operator+）：脱敏摘要发用户自备端点，返回纯文本。
+app.MapPost("/api/advice/{id}/analyze", async (string id, HttpContext http, AiAdviceExternal ext,
+    IAdviceDataSource source, AdviceEngine engine, SettingsStore settings) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || role < UserRole.Operator)
+        return Results.Json(new { error = "insufficient role" }, statusCode: 403);
+    var user = http.Items["taoops.user"]?.ToString() ?? "";
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+
+    // 脱敏摘要：仅指标数值与规则标识（安全位评审口径——不含主机名/IP/节点名）。
+    var advices = await engine.AdviseAsync(id, settings.Load());
+    var summary = $"node metrics summary (anonymized):\n" +
+                  string.Join("\n", advices.Select(a => $"[{a.Level}] {a.Title}: {a.Basis}"));
+    if (advices.Count == 0) summary += "no local rule triggered; metrics within thresholds";
+
+    try
+    {
+        var text = await ext.AnalyzeAsync(id, summary, user, roleStr, ip);
+        return Results.Json(new { advice = text });
+    }
+    catch (AiAdviceExternal.AiExternalException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode);
+    }
+});
+
+// FR-A30 多机批量下发（PRD v1.4）：白名单逐 op 枚举纯只读；入口 Operator 及以上；
+// 服务端二次校验节点在线；限频/并发/截断在 BatchService 内。审计主+子记录进哈希链。
+app.MapPost("/api/batch", async (BatchOpRequest req, HttpContext http, BatchService batch) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || role < UserRole.Operator)
+    {
+        return Results.Json(new { error = "insufficient role for batch" }, statusCode: 403);
+    }
+    var args = (req.Args ?? []).Where(a => a is not null).Select(a => a!).ToList();
+    try
+    {
+        var result = await batch.RunAsync(req.Module ?? "", args, req.NodeIds ?? [],
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new
+        {
+            batch_id = result.BatchId,
+            module = result.Module,
+            success_count = result.SuccessCount,
+            failure_count = result.FailureCount,
+            nodes = result.Nodes.Select(n => new
+            {
+                node_id = n.NodeId, status = n.Status,
+                exit_code = n.ExitCode, output = n.Output, request_id = n.RequestId,
+            }),
+        });
+    }
+    catch (BatchService.BatchException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode);
+    }
+});
+
 // FR-A11 Docker 专用端点：按操作分级鉴权（DockerPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/docker", async (string id, DockerOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
@@ -987,6 +1103,12 @@ public sealed record NodeCmdRequest(string? Command, IReadOnlyList<string>? Args
 // ---- FR-A11 Docker 下发请求（backlog A 增加速器/仓库登录字段）----
 public sealed record DockerOpRequest(string? Op, string? Name, string? Ref, string? Command, int? Tail,
     string? Addr, string? Registry, string? Username, string? Password, int TimeoutMs);
+
+// ---- FR-A30 多机批量下发请求 ----
+public sealed record BatchOpRequest(string? Module, IReadOnlyList<string?>? Args, IReadOnlyList<string>? NodeIds);
+
+// ---- FR-A29 外接模式配置请求 ----
+public sealed record ExternalConfigRequest(string? Endpoint, string? ApiKey, IReadOnlyList<string>? SsrfWhitelist);
 
 // ---- FR-A12 网站统计下发请求 ----
 public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, string? From, string? To, int TimeoutMs);

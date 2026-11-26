@@ -76,7 +76,8 @@ public sealed class MetricsSampler : BackgroundService
             _store.Add(nodeId, new MetricsStore.MetricPoint(
                 _now().ToUnixTimeMilliseconds(),
                 s.CpuUsedPct, s.MemTotalKB, s.MemUsedKB,
-                s.DiskReadBps, s.DiskWriteBps, s.NetRxTotal, s.NetTxTotal));
+                s.DiskReadBps, s.DiskWriteBps, s.NetRxTotal, s.NetTxTotal,
+                s.DiskUsedKB, s.DiskTotalKB));
         }
     }
 
@@ -89,5 +90,7 @@ public sealed class MetricsSampler : BackgroundService
         [JsonPropertyName("disk_write_bps")] public ulong DiskWriteBps { get; set; }
         [JsonPropertyName("net_rx_total")] public ulong NetRxTotal { get; set; }
         [JsonPropertyName("net_tx_total")] public ulong NetTxTotal { get; set; }
+        [JsonPropertyName("disk_used_kb")] public ulong DiskUsedKB { get; set; }
+        [JsonPropertyName("disk_total_kb")] public ulong DiskTotalKB { get; set; }
     }
 }
