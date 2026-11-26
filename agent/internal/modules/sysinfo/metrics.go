@@ -9,9 +9,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
-// Sample is one metrics snapshot (PRD FR-A23).
+// Sample is one metrics snapshot (PRD FR-A23; disk usage fields FR-A29).
 type Sample struct {
 	CPUUsedPct   float64           `json:"cpu_used_pct"`
 	MemTotalKB   uint64            `json:"mem_total_kb"`
@@ -21,6 +22,8 @@ type Sample struct {
 	NetRxTotal   uint64            `json:"net_rx_total"`
 	NetTxTotal   uint64            `json:"net_tx_total"`
 	Disks        map[string]uint64 `json:"disks,omitempty"`
+	DiskUsedKB   uint64            `json:"disk_used_kb,omitempty"`
+	DiskTotalKB  uint64            `json:"disk_total_kb,omitempty"`
 }
 
 // ProcTop is one row of the process Top10.
@@ -125,7 +128,25 @@ func MetricsSample(c *Collector) (*Sample, error) {
 	if rx, tx, ok := netTotals(c); ok {
 		s.NetRxTotal, s.NetTxTotal = rx, tx
 	}
+	// FR-A29: root filesystem usage via statfs (zero dependency).
+	if used, total, ok := diskUsage("/"); ok {
+		s.DiskUsedKB, s.DiskTotalKB = used, total
+	}
 	return s, nil
+}
+
+// diskUsage reports used/total KB of the filesystem at path via statfs.
+func diskUsage(path string) (used, total uint64, ok bool) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, 0, false
+	}
+	total = st.Blocks * uint64(st.Bsize)
+	free := st.Bfree * uint64(st.Bsize)
+	if total < free {
+		return 0, 0, false
+	}
+	return total - free, total, true
 }
 
 // ProcessTop returns the top-N processes by CPU ticks from /proc.
