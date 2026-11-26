@@ -467,7 +467,7 @@ app.MapGet("/api/advice/{id}", async (string id, HttpContext http, AdviceEngine 
     IAdviceDataSource source, SettingsStore settings) =>
 {
     var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
-    if (!Enum.TryParse<UserRole>(roleStr, out var role) || role < UserRole.ReadOnly)
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.ReadOnly))
         return Results.Json(new { error = "insufficient role" }, statusCode: 403);
     var advices = await engine.AdviseAsync(id, settings.Load());
     return Results.Json(new
@@ -512,7 +512,7 @@ app.MapPost("/api/advice/{id}/analyze", async (string id, HttpContext http, AiAd
     IAdviceDataSource source, AdviceEngine engine, SettingsStore settings) =>
 {
     var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
-    if (!Enum.TryParse<UserRole>(roleStr, out var role) || role < UserRole.Operator)
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.Operator))
         return Results.Json(new { error = "insufficient role" }, statusCode: 403);
     var user = http.Items["taoops.user"]?.ToString() ?? "";
     var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
@@ -539,7 +539,7 @@ app.MapPost("/api/advice/{id}/analyze", async (string id, HttpContext http, AiAd
 app.MapPost("/api/batch", async (BatchOpRequest req, HttpContext http, BatchService batch) =>
 {
     var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
-    if (!Enum.TryParse<UserRole>(roleStr, out var role) || role < UserRole.Operator)
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.Operator))
     {
         return Results.Json(new { error = "insufficient role for batch" }, statusCode: 403);
     }
