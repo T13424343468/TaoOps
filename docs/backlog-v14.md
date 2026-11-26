@@ -20,7 +20,7 @@ webstats、ai、upgrade（docker 已切真）。
   4c3d0da / c89b103 实际只加了 mock 配置，台账原「真连页」记载不实，已更正。
   docker 页已随 A 完成切真；webstats 页仍待切真（后端已落码）。
 - B2 六页切真（后端模块已有，补下发桥端点 + 真连页）：cron、site、db、ftp、env、upgrade。
-- B3 两页后端也未落码：ai（AI 运维建议）、nodes（多机批量下发，跨机批量命令）。
+- ~~B3 两页后端也未落码：ai（AI 运维建议）、nodes（多机批量下发，跨机批量命令）~~——已收口（2026-11-26，PRD v1.4 过三路评审，提交 fd080ab/b8dd494/58c7be3，台账在案）。
   先补 PRD 增补设计过三路评审再编码。
 
 ## C. 体验优化三件
