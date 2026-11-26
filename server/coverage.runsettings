@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <Include>[TaoOps.Server]*</Include>
+          <SkipAutoProperties>true</SkipAutoProperties>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+  <RunConfiguration>
+    <TestSessionPath>/tmp/coverage</TestSessionPath>
+  </RunConfiguration>
+</RunSettings>
