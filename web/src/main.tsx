@@ -5,6 +5,8 @@ import { ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import AppShell, { useAuthGate } from "./App";
 import LoginPage from "./pages/Login";
+import AiPage from "./pages/Ai";
+import NodesPage from "./pages/Nodes";
 import DashPage from "./pages/Dash";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
@@ -32,17 +34,12 @@ import UpgradePage from "./pages/Upgrade";
 import UsersPage from "./pages/Users";
 import FwPage from "./pages/Fw";
 import SettingsPage from "./pages/Settings";
-import ModulePage from "./pages/ModulePage";
-import {
-  AI_PAGE,
-  // DB_PAGE、FTP_PAGE、ENV_PAGE、UPGRADE_PAGE 已切真（backlog B2）
-  NODES_PAGE,
-} from "./pages/configs";
+// FR-A29/A30：ai、nodes 两页切真（B3 收口），ModulePage 占位全部退役。
 
 const router = createHashRouter([
   { path: "/", element: <AppShell user={null!} onLogout={() => {}} />, children: [
     { path: "dash", element: <DashPage /> },
-    { path: "nodes", element: <ModulePage config={NODES_PAGE} /> },
+    { path: "nodes", element: <NodesPage /> },
     { path: "term", element: <TermPage /> },
     { path: "monitor", element: <MetricsPage /> },
     { path: "site", element: <SitePage /> },
@@ -65,7 +62,7 @@ const router = createHashRouter([
     { path: "settings", element: <SettingsPage /> },
     { path: "audit", element: <AuditPage /> },
     { path: "totp", element: <TotpPage /> },
-    { path: "ai", element: <ModulePage config={AI_PAGE} /> },
+    { path: "ai", element: <AiPage /> },
     { path: "upgrade", element: <UpgradePage /> },
     { path: "push", element: <PushPage /> },
     { path: "logclean", element: <LogCleanPage /> },
