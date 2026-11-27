@@ -93,9 +93,11 @@ jobs:
           if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\TaoOps") { $fail += "service registry key remains" }
           if (Test-Path "HKLM:\SOFTWARE\TaoOps") { $fail += "software registry key remains" }
           $fw = netsh.exe advfirewall firewall show rule name="TaoOps" | Out-String
+          if ($LASTEXITCODE -eq 1) { $global:LASTEXITCODE = 0 } # netsh 无匹配规则退出码 1，非错误
           if ($fw -notmatch "No rules match") { $fail += "firewall rule remains" }
           if ($fail.Count -gt 0) { throw "RESIDUE FOUND: $($fail -join '; ')" }
           Write-Host "UNINSTALL-CLEAN-OK: service/registry/firewall all clean"
+          exit 0
 
       - name: 验证小结
         if: always()
