@@ -48,8 +48,14 @@ public class CertManager
             X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.KeyEncipherment, true));
 
         var now = DateTimeOffset.UtcNow.AddDays(-1);
-        // X509Certificate2 持私钥：用 PFX 往返确保副本带私钥（loader 口径，规避 SYSLIB0057）。
-        var cert = req.CreateSelfSigned(now, now.AddYears(10));
+        // 手动签发 + CopyWithPrivateKey：私钥始终留在内存（RSA 对象），不进 Windows 证书库——
+        // 服务/CI 环境下 CreateSelfSigned 的持久化密钥导出 Pkcs12 会报
+        // "Key not valid for use in specified state"（FR-A31 Windows 真机验证抓出）。
+        // Linux 无影响；PFX 落数据目录后重启走 LoadPkcs12FromFile，行为不变。
+        var serial = RandomNumberGenerator.GetBytes(16);
+        var generator = X509SignatureGenerator.CreateForRSA(rsa, RSASignaturePadding.Pkcs1);
+        var certPub = req.Create(new X500DistinguishedName("CN=taoops-server"), generator, now, now.AddYears(10), serial);
+        var cert = certPub.CopyWithPrivateKey(rsa);
         var pfx = cert.Export(X509ContentType.Pkcs12, PfxPassword);
         return X509CertificateLoader.LoadPkcs12(pfx, PfxPassword);
     }
