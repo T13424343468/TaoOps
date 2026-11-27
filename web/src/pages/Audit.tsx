@@ -4,7 +4,7 @@ import { api } from "../api/client";
 
 interface AuditEntry {
   seq: number;
-  tsMs: number;
+  ts: number;
   user: string;
   action: string;
   target?: string;
@@ -18,15 +18,15 @@ interface AuthUserRow {
 
 interface LockoutRow {
   username: string;
-  failCount: number;
-  lockedUntilMs: number;
+  failures: number;
+  unlockAtMs: number;
 }
 
 interface SecEvent {
   nodeId: string;
-  tsMs: number;
-  kind: string;
-  source?: string;
+  ts: number;
+  event: string;
+  ip?: string;
 }
 
 export default function AuditPage() {
@@ -52,7 +52,7 @@ export default function AuditPage() {
         rowKey="seq" size="small" pagination={{ pageSize: 10 }} dataSource={entries}
         columns={[
           { title: "#", dataIndex: "seq", width: 60 },
-          { title: "时间", dataIndex: "tsMs", render: (t: number) => new Date(t).toLocaleString() },
+          { title: "时间", dataIndex: "ts", render: (t: number) => new Date(t).toLocaleString() },
           { title: "用户", dataIndex: "user" },
           { title: "操作", dataIndex: "action" },
           { title: "对象", dataIndex: "target" },
@@ -76,20 +76,20 @@ export default function AuditPage() {
       rowKey="username" size="small" pagination={false} dataSource={lockouts}
       columns={[
         { title: "用户名", dataIndex: "username" },
-        { title: "失败次数", dataIndex: "failCount" },
-        { title: "锁定至", dataIndex: "lockedUntilMs", render: (t: number) => (t > Date.now() ? new Date(t).toLocaleString() : "已解除") },
+        { title: "失败次数", dataIndex: "failures" },
+        { title: "锁定至", dataIndex: "unlockAtMs", render: (t: number) => (t > Date.now() ? new Date(t).toLocaleString() : "已解除") },
       ]}
     />
   );
 
   const secTable = (
     <Table
-      rowKey={(r: SecEvent) => `${r.nodeId}-${r.tsMs}-${r.kind}`} size="small" pagination={{ pageSize: 10 }} dataSource={secEvents}
+      rowKey={(r: SecEvent) => `${r.nodeId}-${r.ts}-${r.event}`} size="small" pagination={{ pageSize: 10 }} dataSource={secEvents}
       columns={[
         { title: "节点", dataIndex: "nodeId" },
-        { title: "时间", dataIndex: "tsMs", render: (t: number) => new Date(t).toLocaleString() },
-        { title: "类型", dataIndex: "kind" },
-        { title: "来源", dataIndex: "source" },
+        { title: "时间", dataIndex: "ts", render: (t: number) => new Date(t).toLocaleString() },
+        { title: "类型", dataIndex: "event" },
+        { title: "来源", dataIndex: "ip" },
       ]}
     />
   );
