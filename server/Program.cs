@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using System.Text.Json;
+using TaoOps.Server;
 using TaoOps.Server.Alerts;
 using TaoOps.Server.Audit;
 using TaoOps.Server.Auth;
@@ -12,6 +13,8 @@ using TaoOps.Server.Settings;
 using TaoOps.Server.Waf;
 
 var builder = WebApplication.CreateBuilder(args);
+// Windows 版 FR-A31：以 Windows 服务方式常驻（Linux 沿用 systemd/裸跑，不受影响）。
+builder.Services.AddWindowsService(o => o.ServiceName = "TaoOps");
 builder.Services.AddGrpc();
 builder.Services.AddSingleton<NodeRegistry>();
 builder.Services.AddSingleton<NodeCommandHub>();
@@ -20,8 +23,8 @@ builder.Services.AddSingleton<NodeCommandBridge>();
 // FR-A30 多机批量下发（PRD v1.4）。
 builder.Services.AddSingleton<BatchService>();
 
-// WAF 管理面（M3）：规则真源与事件账本落数据目录。
-var wafDataDir = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR") ?? "/var/lib/taoops/server";
+// WAF 管理面（M3）：规则真源与事件账本落数据目录（FR-A31：平台化解析，Windows 走 %ProgramData%\TaoOps\data）。
+var wafDataDir = TaoOpsPaths.DataDir;
 builder.Services.AddSingleton<WafRuleStore>(_ => new WafRuleStore(wafDataDir));
 builder.Services.AddSingleton<WafEventStore>(_ => new WafEventStore(wafDataDir));
 builder.Services.AddSingleton<WafEventIngestor>();
@@ -122,10 +125,28 @@ var legacyUrls = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNE
 Program.ConfigureTransport(builder, insecure, legacyUrls);
 
 var app = builder.Build();
+// FR-A31 界面自带：web/dist 随中控分发（安装器拷到程序目录 web/，或 TAOOPS_WEB_DIST 指定）。
+// 命中时静态文件优先于 MapGet("/")，SPA 路由回退 index.html；未命中保持 API-only 既有行为。
+var webDist = TaoOpsPaths.ResolveWebDist(
+    Environment.GetEnvironmentVariable("TAOOPS_WEB_DIST"), AppContext.BaseDirectory);
+if (webDist is not null)
+{
+    var webProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(webDist);
+    // 注意：DefaultFilesOptions 无参构造不填 DefaultFileNames（internal 构造才填），必须显式设置。
+    var defaultFiles = new DefaultFilesOptions { FileProvider = webProvider };
+    defaultFiles.DefaultFileNames = ["index.html"];
+    app.UseDefaultFiles(defaultFiles);
+    app.UseStaticFiles(new StaticFileOptions { FileProvider = webProvider });
+    app.MapFallbackToFile("index.html", new StaticFileOptions { FileProvider = webProvider });
+}
 app.UseWebSockets();
 // 中间件次序：审计在外（401/403 拒绝也留痕），鉴权在内；仅作用于 /api。
 app.UseMiddleware<AuditMiddleware>();
 app.UseMiddleware<AuthMiddleware>();
+// 显式路由匹配：必须置于静态文件之后。WebApplication 缺省把 UseRouting 自动插到管道最前，
+// 而 StaticFilesMiddleware 遇到「已匹配端点」会主动让路（ValidateNoEndpoint），
+// 导致自带界面永远落到 MapGet("/")。显式调用后静态文件先于端点匹配短路。
+app.UseRouting();
 app.MapGrpcService<AgentService>();
 app.MapGet("/", () => insecure ? "TaoOps Server M2 (insecure)" : "TaoOps Server M2");
 
@@ -1073,7 +1094,7 @@ public partial class Program
     {
         if (!insecure)
         {
-            var dataDir = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR") ?? "/var/lib/taoops/server";
+            var dataDir = TaoOpsPaths.DataDir;
             var port = int.TryParse(Environment.GetEnvironmentVariable("TAOOPS_PORT"), out var p) && p > 0 ? p : 5241;
             var cert = new CertManager(dataDir).GetOrCreate();
             builder.WebHost.ConfigureKestrel(o =>
