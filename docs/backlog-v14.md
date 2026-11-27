@@ -52,3 +52,10 @@ webstats、ai、upgrade（docker 已切真）。
 
 A → B1（回归修复）→ B2 → C → D → B3 → F → E。
 红线全绿才提交；每项完成在台账记一笔。
+
+## G. Windows 版中控（2026-11-27 老板令「win也要，就这个版」）
+
+- G1 ✅ Windows 原型定版：安装向导 6 步（默认盘符 D、目录可改）+ 服务自启页 + 升级回滚页 + 完全卸载页，视觉评分 16 屏满分（草案口径），三视角评审有条件通过，老板 2026-11-27 拍板定版。
+- G2 ✅ 中控 Windows 支持（FR-A31，提交 43f91ff）：AddWindowsService 服务壳（服务名 TaoOps，Linux 不受影响）；数据目录平台化（Windows %ProgramData%\TaoOps\data）；界面自带托管（web/dist 随中控分发，静态+SPA 回退）。测试 770/770 全绿（新增 9 条平台测试）。
+- G3 ✅ 安装器与卸载脚本：installer/windows/taops.iss（默认 D:\Program Files\TaoOps 可改；装服务自启+防火墙放行；卸载六项全清：服务/自启/注册表/防火墙/文件/数据目录可选保留）+ scripts/publish-windows.sh 发布脚本。
+- G4 待办：Windows 真机验证（服务注册/自启/卸载残留核查）——需 Windows 环境，云测或老板提供机器后执行。
