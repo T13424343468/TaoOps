@@ -210,7 +210,7 @@ app.MapGet("/api/waf/config/preview", (WafRuleStore store) =>
 // ---- 认证与账号管理（M3 安全班，PRD FR-C2 面板侧）----
 app.MapPost("/api/auth/login", (LoginRequest req, HttpContext http, AuthService auth, TotpService totp) =>
 {
-    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var ip = http.ClientIp();
     var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     var result = auth.Login(req.Username ?? "", req.Password ?? "", ip, nowMs);
     if (result.Locked) return Results.Json(new { error = "account locked" }, statusCode: 423);
@@ -224,7 +224,7 @@ app.MapPost("/api/auth/login", (LoginRequest req, HttpContext http, AuthService 
 // FR-A16：登录二次校验（6 位 TOTP 或恢复码），成功发会话。
 app.MapPost("/api/auth/totp/verify", (TotpVerifyRequest req, HttpContext http, TotpService totp) =>
 {
-    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var ip = http.ClientIp();
     var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     var result = totp.VerifyLogin(req.Username ?? "", req.Code, ip, nowMs);
     if (result.Locked) return Results.Json(new { error = "account locked" }, statusCode: 423);
@@ -236,7 +236,7 @@ app.MapPost("/api/auth/totp/verify", (TotpVerifyRequest req, HttpContext http, T
 // FR-A16：绑定准备（需登录 + 密码复验），返回密钥与 otpauth URI（前端渲染二维码）。
 app.MapPost("/api/auth/totp/setup", (TotpSetupRequest req, HttpContext http, TotpService totp) =>
 {
-    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var ip = http.ClientIp();
     var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     try
     {
@@ -248,7 +248,7 @@ app.MapPost("/api/auth/totp/setup", (TotpSetupRequest req, HttpContext http, Tot
 // FR-A16：确认绑定（需密码复验），返回 10 枚恢复码明文（仅此一次）。
 app.MapPost("/api/auth/totp/enable", (TotpEnableRequest req, HttpContext http, TotpService totp) =>
 {
-    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var ip = http.ClientIp();
     var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     try
     {
@@ -261,7 +261,7 @@ app.MapPost("/api/auth/totp/enable", (TotpEnableRequest req, HttpContext http, T
 // FR-A16：重新生成恢复码（需登录 + 密码复验），旧码全部失效。
 app.MapPost("/api/auth/totp/recovery/regenerate", (TotpEnableRequest req, HttpContext http, TotpService totp) =>
 {
-    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var ip = http.ClientIp();
     var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
     var (codes, err) = totp.RegenerateRecovery(req.Username ?? "", req.Password ?? "", ip, nowMs);
     if (err != "") return Results.BadRequest(new { error = err });
@@ -325,22 +325,22 @@ app.MapGet("/api/auth/lockouts", (AuthService auth) =>
 app.MapPost("/api/auth/change-password", (ChangePasswordRequest req, HttpContext http,
     UserStore users, AuditStore audit) =>
 {
-    var username = http.Items["taoops.user"]?.ToString() ?? "";
+    var username = http.AuthUser();
     var account = users.Find(username);
     if (account is null) return Results.Json(new { error = "user not found" }, statusCode: 404);
     if (!AuthService.VerifyPassword(req.OldPassword ?? "", account.PasswordHash))
     {
-        audit.Append(new AuditEvent { User = username, Role = http.Items["taoops.role"]?.ToString() ?? "",
+        audit.Append(new AuditEvent { User = username, Role = http.AuthRole(),
             Action = "auth.change_password", Target = username,
-            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "old_password_mismatch" });
+            Ip = http.ClientIp(), Result = "old_password_mismatch" });
         return Results.Json(new { error = "旧密码不正确" }, statusCode: 400);
     }
     if (string.IsNullOrEmpty(req.NewPassword) || req.NewPassword.Length < 8)
         return Results.Json(new { error = "新密码至少 8 位" }, statusCode: 400);
     users.UpdatePasswordHash(username, AuthService.HashPassword(req.NewPassword));
-    audit.Append(new AuditEvent { User = username, Role = http.Items["taoops.role"]?.ToString() ?? "",
+    audit.Append(new AuditEvent { User = username, Role = http.AuthRole(),
         Action = "auth.change_password", Target = username,
-        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+        Ip = http.ClientIp(), Result = "ok" });
     return Results.Ok();
 });
 
@@ -350,7 +350,7 @@ app.MapGet("/api/settings/alerts", (AlertCenter alerts) =>
 app.MapPut("/api/settings/alerts", (AlertThresholdSettings req, HttpContext http,
     SettingsStore store, AlertCenter alerts, AuditStore audit) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || role != UserRole.Admin)
         return Results.Json(new { error = "admin role required" }, statusCode: 403);
     if (req.DiskCriticalPct is < 1 or > 99) return Results.Json(new { error = "disk_critical_pct 须在 1-99" }, statusCode: 400);
@@ -359,9 +359,9 @@ app.MapPut("/api/settings/alerts", (AlertThresholdSettings req, HttpContext http
         return Results.Json(new { error = "复位阈值须低于触发阈值（迟滞口径）" }, statusCode: 400);
     store.Save(req);
     alerts.ReloadThresholds(store);
-    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "", Role = roleStr,
+    audit.Append(new AuditEvent { User = http.AuthUser(), Role = roleStr,
         Action = "settings.alerts", Target = "alert_thresholds",
-        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "",
+        Ip = http.ClientIp(),
         Result = $"critical={req.DiskCriticalPct} reset={req.DiskResetPct}" });
     return Results.Json(new { disk_critical_pct = alerts.DiskCriticalPct, disk_reset_pct = alerts.DiskResetPct,
         note = "阈值已落盘并即时生效" });
@@ -409,24 +409,24 @@ app.MapPost("/api/push/channels", async (PushChannelReq req, HttpContext http,
     var ssrfError = await Push.SsrfGuard.ValidateTargetAsync(url, whitelist.List());
     if (ssrfError is not null)
     {
-        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
-            Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.channel",
-            Target = url, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = $"rejected: {ssrfError}" });
+        audit.Append(new AuditEvent { User = http.AuthUser(),
+            Role = http.AuthRole(), Action = "push.channel",
+            Target = url, Ip = http.ClientIp(), Result = $"rejected: {ssrfError}" });
         return Results.Json(new { error = ssrfError }, statusCode: 400);
     }
     var channel = store.Upsert(new Push.PushChannel { Id = req.Id ?? "", Name = req.Name ?? "", Url = url, Enabled = req.Enabled ?? true });
-    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
-        Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.channel",
-        Target = url, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+    audit.Append(new AuditEvent { User = http.AuthUser(),
+        Role = http.AuthRole(), Action = "push.channel",
+        Target = url, Ip = http.ClientIp(), Result = "ok" });
     return Results.Json(channel);
 });
 app.MapDelete("/api/push/channels/{id}", (string id, HttpContext http,
     Push.PushChannelStore store, AuditStore audit) =>
 {
     var ok = store.Delete(id);
-    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
-        Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.channel",
-        Target = id, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = ok ? "ok" : "not_found" });
+    audit.Append(new AuditEvent { User = http.AuthUser(),
+        Role = http.AuthRole(), Action = "push.channel",
+        Target = id, Ip = http.ClientIp(), Result = ok ? "ok" : "not_found" });
     return ok ? Results.Ok() : Results.NotFound();
 });
 app.MapGet("/api/push/whitelist", (Push.SsrfWhitelistStore store) => Results.Json(store.List()));
@@ -436,13 +436,13 @@ app.MapPut("/api/push/whitelist", (WhitelistReq req, HttpContext http,
     var (oldEntries, newEntries) = store.Replace(req.Entries ?? []);
     // 变更进审计哈希链：逐条记录新增与移除。
     foreach (var added in newEntries.Where(e => !oldEntries.Contains(e, StringComparer.OrdinalIgnoreCase)))
-        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
-            Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.whitelist",
-            Target = added, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "added" });
+        audit.Append(new AuditEvent { User = http.AuthUser(),
+            Role = http.AuthRole(), Action = "push.whitelist",
+            Target = added, Ip = http.ClientIp(), Result = "added" });
     foreach (var removed in oldEntries.Where(e => !newEntries.Contains(e, StringComparer.OrdinalIgnoreCase)))
-        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
-            Role = http.Items["taoops.role"]?.ToString() ?? "", Action = "push.whitelist",
-            Target = removed, Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "removed" });
+        audit.Append(new AuditEvent { User = http.AuthUser(),
+            Role = http.AuthRole(), Action = "push.whitelist",
+            Target = removed, Ip = http.ClientIp(), Result = "removed" });
     return Results.Json(newEntries);
 });
 app.MapPost("/api/push/test", async (TestPushReq req, Push.PushChannelStore channels,
@@ -487,7 +487,7 @@ app.MapGet("/api/nodes/{id}/metrics", (string id, MetricsStore store, int? hours
 app.MapGet("/api/advice/{id}", async (string id, HttpContext http, AdviceEngine engine,
     IAdviceDataSource source, SettingsStore settings) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.ReadOnly))
         return Results.Json(new { error = "insufficient role" }, statusCode: 403);
     var advices = await engine.AdviseAsync(id, settings.Load());
@@ -505,7 +505,7 @@ app.MapGet("/api/advice/{id}", async (string id, HttpContext http, AdviceEngine 
 // FR-A29 外接模式配置（Admin）：Key 不回显，只返回 has_key 状态。
 app.MapGet("/api/advice/external/config", (HttpContext http, AiAdviceExternal ext) =>
 {
-    var cfgRole = http.Items["taoops.role"]?.ToString() ?? "";
+    var cfgRole = http.AuthRole();
     if (!Enum.TryParse<UserRole>(cfgRole, out var cfgParsed) || cfgParsed != UserRole.Admin)
         return Results.Json(new { error = "admin only" }, statusCode: 403);
     var (endpoint, hasKey, whitelist) = ext.LoadConfigSafe();
@@ -513,7 +513,7 @@ app.MapGet("/api/advice/external/config", (HttpContext http, AiAdviceExternal ex
 });
 app.MapPost("/api/advice/external/config", (ExternalConfigRequest req, HttpContext http, AiAdviceExternal ext) =>
 {
-    var saveRole = http.Items["taoops.role"]?.ToString() ?? "";
+    var saveRole = http.AuthRole();
     if (!Enum.TryParse<UserRole>(saveRole, out var saveParsed) || saveParsed != UserRole.Admin)
         return Results.Json(new { error = "admin only" }, statusCode: 403);
     try
@@ -532,11 +532,11 @@ app.MapPost("/api/advice/external/config", (ExternalConfigRequest req, HttpConte
 app.MapPost("/api/advice/{id}/analyze", async (string id, HttpContext http, AiAdviceExternal ext,
     IAdviceDataSource source, AdviceEngine engine, SettingsStore settings) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.Operator))
         return Results.Json(new { error = "insufficient role" }, statusCode: 403);
-    var user = http.Items["taoops.user"]?.ToString() ?? "";
-    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+    var user = http.AuthUser();
+    var ip = http.ClientIp();
 
     // 脱敏摘要：仅指标数值与规则标识（安全位评审口径——不含主机名/IP/节点名）。
     var advices = await engine.AdviseAsync(id, settings.Load());
@@ -559,7 +559,7 @@ app.MapPost("/api/advice/{id}/analyze", async (string id, HttpContext http, AiAd
 // 服务端二次校验节点在线；限频/并发/截断在 BatchService 内。审计主+子记录进哈希链。
 app.MapPost("/api/batch", async (BatchOpRequest req, HttpContext http, BatchService batch) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.Operator))
     {
         return Results.Json(new { error = "insufficient role for batch" }, statusCode: 403);
@@ -568,8 +568,8 @@ app.MapPost("/api/batch", async (BatchOpRequest req, HttpContext http, BatchServ
     try
     {
         var result = await batch.RunAsync(req.Module ?? "", args, req.NodeIds ?? [],
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new
         {
             batch_id = result.BatchId,
@@ -592,7 +592,7 @@ app.MapPost("/api/batch", async (BatchOpRequest req, HttpContext http, BatchServ
 // FR-A11 Docker 专用端点：按操作分级鉴权（DockerPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/docker", async (string id, DockerOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DockerPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for docker op" }, statusCode: 403);
@@ -601,8 +601,8 @@ app.MapPost("/api/nodes/{id}/docker", async (string id, DockerOpRequest req, Htt
     try
     {
         var outcome = await bridge.DispatchAsync(id, "docker.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -610,7 +610,7 @@ app.MapPost("/api/nodes/{id}/docker", async (string id, DockerOpRequest req, Htt
 // FR-A12 网站统计专用端点：按操作分级鉴权（WebStatsPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/webstats", async (string id, WebStatsOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !WebStatsPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for webstats op" }, statusCode: 403);
@@ -619,8 +619,8 @@ app.MapPost("/api/nodes/{id}/webstats", async (string id, WebStatsOpRequest req,
     try
     {
         var outcome = await bridge.DispatchAsync(id, "webstats.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -628,7 +628,7 @@ app.MapPost("/api/nodes/{id}/webstats", async (string id, WebStatsOpRequest req,
 // 主机防火墙端点（backlog F3）：按操作分级鉴权（FwPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/fw", async (string id, FwOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !FwPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for fw op" }, statusCode: 403);
@@ -637,8 +637,8 @@ app.MapPost("/api/nodes/{id}/fw", async (string id, FwOpRequest req, HttpContext
     try
     {
         var outcome = await bridge.DispatchAsync(id, "fw.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -646,7 +646,7 @@ app.MapPost("/api/nodes/{id}/fw", async (string id, FwOpRequest req, HttpContext
 // 防篡改状态端点（backlog F3）：status 只读，经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/tamperguard", async (string id, TamperGuardOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !TamperGuardPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for tamperguard op" }, statusCode: 403);
@@ -655,8 +655,8 @@ app.MapPost("/api/nodes/{id}/tamperguard", async (string id, TamperGuardOpReques
     try
     {
         var outcome = await bridge.DispatchAsync(id, "tamper.guard", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -664,7 +664,7 @@ app.MapPost("/api/nodes/{id}/tamperguard", async (string id, TamperGuardOpReques
 // 计划任务专用端点（backlog B2 切真）：按操作分级鉴权（CronPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/cron", async (string id, CronOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !CronPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for cron op" }, statusCode: 403);
@@ -673,8 +673,8 @@ app.MapPost("/api/nodes/{id}/cron", async (string id, CronOpRequest req, HttpCon
     try
     {
         var outcome = await bridge.DispatchAsync(id, "cron.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -682,7 +682,7 @@ app.MapPost("/api/nodes/{id}/cron", async (string id, CronOpRequest req, HttpCon
 // 网站专用端点（backlog B2 切真）：按操作分级鉴权（SitePolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/site", async (string id, SiteOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !SitePolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for site op" }, statusCode: 403);
@@ -691,8 +691,8 @@ app.MapPost("/api/nodes/{id}/site", async (string id, SiteOpRequest req, HttpCon
     try
     {
         var outcome = await bridge.DispatchAsync(id, "site.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -700,7 +700,7 @@ app.MapPost("/api/nodes/{id}/site", async (string id, SiteOpRequest req, HttpCon
 // FR-A14 一键迁移专用端点：按操作分级鉴权（MigratePolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/migrate", async (string id, MigrateOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !MigratePolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for migrate op" }, statusCode: 403);
@@ -709,8 +709,8 @@ app.MapPost("/api/nodes/{id}/migrate", async (string id, MigrateOpRequest req, H
     try
     {
         var outcome = await bridge.DispatchAsync(id, "migrate.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -718,7 +718,7 @@ app.MapPost("/api/nodes/{id}/migrate", async (string id, MigrateOpRequest req, H
 // FR-A24 应用一键部署专用端点：按操作分级鉴权（AppDeployPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/apps", async (string id, AppDeployRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !AppDeployPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for app deploy op" }, statusCode: 403);
@@ -727,8 +727,8 @@ app.MapPost("/api/nodes/{id}/apps", async (string id, AppDeployRequest req, Http
     try
     {
         var outcome = await bridge.DispatchAsync(id, "app.deploy", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -741,7 +741,7 @@ app.MapGet("/api/k8s/clusters", (KubeClusterStore store) => Results.Json(store.L
 app.MapPost("/api/k8s/clusters", (K8sRequest req, HttpContext http,
     KubeClusterStore store, K8sClusterService svc, AuditStore audit) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("add", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     var name = req.Name ?? "";
@@ -753,33 +753,33 @@ app.MapPost("/api/k8s/clusters", (K8sRequest req, HttpContext http,
     catch (Exception ex)
     {
         // 连接测试失败：报错不含 kubeconfig 内容。
-        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+        audit.Append(new AuditEvent { User = http.AuthUser(),
             Role = roleStr, Action = "k8s.cluster", Target = name,
-            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "connect_failed" });
+            Ip = http.ClientIp(), Result = "connect_failed" });
         return Results.Json(new { error = $"连接测试失败: {ex.Message}" }, statusCode: 400);
     }
     var meta = store.Save(name, kubeconfig, version);
-    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+    audit.Append(new AuditEvent { User = http.AuthUser(),
         Role = roleStr, Action = "k8s.cluster", Target = name,
-        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = $"ok version={version}" });
+        Ip = http.ClientIp(), Result = $"ok version={version}" });
     return Results.Json(meta);
 });
 app.MapDelete("/api/k8s/clusters/{name}", (string name, HttpContext http,
     KubeClusterStore store, AuditStore audit, bool confirm) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("remove_cluster", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     var ok = store.Remove(name, confirm);
-    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+    audit.Append(new AuditEvent { User = http.AuthUser(),
         Role = roleStr, Action = "k8s.cluster", Target = name,
-        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = ok ? "removed" : (confirm ? "not_found" : "confirm_required") });
+        Ip = http.ClientIp(), Result = ok ? "removed" : (confirm ? "not_found" : "confirm_required") });
     return ok ? Results.Ok() : Results.Json(new { error = confirm ? "cluster not found" : "confirm=true required" },
         statusCode: confirm ? 404 : 400);
 });
 app.MapGet("/api/k8s/{cluster}/nodes", (string cluster, HttpContext http, K8sClusterService svc) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("nodes", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     try { return Results.Json(svc.ListNodes(cluster)); }
@@ -788,7 +788,7 @@ app.MapGet("/api/k8s/{cluster}/nodes", (string cluster, HttpContext http, K8sClu
 });
 app.MapGet("/api/k8s/{cluster}/workloads", (string cluster, HttpContext http, K8sClusterService svc, string? ns) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("workloads", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     try { return Results.Json(svc.ListWorkloads(cluster, ns ?? "")); }
@@ -797,7 +797,7 @@ app.MapGet("/api/k8s/{cluster}/workloads", (string cluster, HttpContext http, K8
 });
 app.MapGet("/api/k8s/{cluster}/pods", (string cluster, HttpContext http, K8sClusterService svc, string? ns) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("pods", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     try { return Results.Json(svc.ListPods(cluster, ns ?? "")); }
@@ -807,7 +807,7 @@ app.MapGet("/api/k8s/{cluster}/pods", (string cluster, HttpContext http, K8sClus
 // 集群健康总览（backlog C2）：全部集群节点/Pod 汇总，单集群巡检失败降级为 Error。
 app.MapGet("/api/k8s/health", (HttpContext http, K8sClusterService svc) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("nodes", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     return Results.Json(svc.Health());
@@ -815,7 +815,7 @@ app.MapGet("/api/k8s/health", (HttpContext http, K8sClusterService svc) =>
 // Pod 资源用量（backlog C1）：metrics.k8s.io 自定义 API，未装 metrics-server 时降级说明。
 app.MapGet("/api/k8s/{cluster}/metrics", async (string cluster, HttpContext http, K8sClusterService svc) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("metrics", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     try { return Results.Json(await svc.PodMetricsAsync(cluster)); }
@@ -824,7 +824,7 @@ app.MapGet("/api/k8s/{cluster}/metrics", async (string cluster, HttpContext http
 });
 app.MapGet("/api/k8s/{cluster}/events", (string cluster, HttpContext http, K8sClusterService svc, string? ns) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("events", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     try { return Results.Json(svc.ListEvents(cluster, ns ?? "")); }
@@ -835,15 +835,15 @@ app.MapGet("/api/k8s/{cluster}/events", (string cluster, HttpContext http, K8sCl
 app.MapGet("/api/k8s/{cluster}/logs", (string cluster, HttpContext http, K8sClusterService svc,
     AuditStore audit, string ns, string pod, string? container) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("logs", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     try
     {
         var log = svc.GetPodLog(cluster, ns, pod, container);
-        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+        audit.Append(new AuditEvent { User = http.AuthUser(),
             Role = roleStr, Action = "k8s.logs", Target = $"{cluster}/{ns}/{pod}",
-            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+            Ip = http.ClientIp(), Result = "ok" });
         return Results.Content(log);
     }
     catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
@@ -853,12 +853,12 @@ app.MapGet("/api/k8s/{cluster}/logs", (string cluster, HttpContext http, K8sClus
 app.MapPost("/api/k8s/{cluster}/ops", (string cluster, K8sRequest req, HttpContext http,
     K8sClusterService svc, AuditStore audit) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows(req.Op ?? "", role))
     {
-        audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+        audit.Append(new AuditEvent { User = http.AuthUser(),
             Role = roleStr, Action = "k8s.op", Target = $"{cluster}/{req.Op}",
-            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "denied" });
+            Ip = http.ClientIp(), Result = "denied" });
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     }
     try
@@ -880,9 +880,9 @@ app.MapPost("/api/k8s/{cluster}/ops", (string cluster, K8sRequest req, HttpConte
             _ => throw new ArgumentException($"未知操作: {req.Op}"),
         };
         if (req.Op is "scale" or "restart" or "deploy" or "remove")
-            audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "",
+            audit.Append(new AuditEvent { User = http.AuthUser(),
                 Role = roleStr, Action = "k8s.op", Target = $"{cluster}/{req.Op}/{req.Deployment ?? req.Name}",
-                Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+                Ip = http.ClientIp(), Result = "ok" });
         return Results.Json(result);
     }
     catch (ArgumentException ex) { return Results.Json(new { error = ex.Message }, statusCode: 400); }
@@ -894,7 +894,7 @@ static object Wrap(Func<object> f) => f();
 // FR-A18 负载均衡专用端点：按操作分级鉴权（LbPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/lb", async (string id, LbOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !LbPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for lb op" }, statusCode: 403);
@@ -903,8 +903,8 @@ app.MapPost("/api/nodes/{id}/lb", async (string id, LbOpRequest req, HttpContext
     try
     {
         var outcome = await bridge.DispatchAsync(id, "lb.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -912,7 +912,7 @@ app.MapPost("/api/nodes/{id}/lb", async (string id, LbOpRequest req, HttpContext
 // FR-A17 日志清理专用端点：按操作分级鉴权（LogCleanPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/logclean", async (string id, LogCleanOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !LogCleanPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for logclean op" }, statusCode: 403);
@@ -921,8 +921,8 @@ app.MapPost("/api/nodes/{id}/logclean", async (string id, LogCleanOpRequest req,
     try
     {
         var outcome = await bridge.DispatchAsync(id, "logclean.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -930,7 +930,7 @@ app.MapPost("/api/nodes/{id}/logclean", async (string id, LogCleanOpRequest req,
 // FR-A15 MySQL 主从复制专用端点：按操作分级鉴权（DbPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/db", async (string id, DbReplicaRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DbPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for db replica op" }, statusCode: 403);
@@ -939,8 +939,8 @@ app.MapPost("/api/nodes/{id}/db", async (string id, DbReplicaRequest req, HttpCo
     try
     {
         var outcome = await bridge.DispatchAsync(id, "db.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -948,7 +948,7 @@ app.MapPost("/api/nodes/{id}/db", async (string id, DbReplicaRequest req, HttpCo
 // 数据库基础操作专用端点（backlog B2 切真）：按操作分级鉴权（DbPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/db/ops", async (string id, DbOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DbPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for db op" }, statusCode: 403);
@@ -957,8 +957,8 @@ app.MapPost("/api/nodes/{id}/db/ops", async (string id, DbOpRequest req, HttpCon
     try
     {
         var outcome = await bridge.DispatchAsync(id, "db.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -966,7 +966,7 @@ app.MapPost("/api/nodes/{id}/db/ops", async (string id, DbOpRequest req, HttpCon
 // FTP 专用端点（backlog B2 切真）：按操作分级鉴权（FtpPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/ftp", async (string id, FtpOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !FtpPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for ftp op" }, statusCode: 403);
@@ -975,8 +975,8 @@ app.MapPost("/api/nodes/{id}/ftp", async (string id, FtpOpRequest req, HttpConte
     try
     {
         var outcome = await bridge.DispatchAsync(id, "ftp.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -984,7 +984,7 @@ app.MapPost("/api/nodes/{id}/ftp", async (string id, FtpOpRequest req, HttpConte
 // 环境变量（运行环境）专用端点（backlog B2 切真）：按操作分级鉴权（EnvPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/env", async (string id, EnvOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !EnvPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for env op" }, statusCode: 403);
@@ -993,8 +993,8 @@ app.MapPost("/api/nodes/{id}/env", async (string id, EnvOpRequest req, HttpConte
     try
     {
         var outcome = await bridge.DispatchAsync(id, "env.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -1002,7 +1002,7 @@ app.MapPost("/api/nodes/{id}/env", async (string id, EnvOpRequest req, HttpConte
 // FR-A21 SSL 证书端点：按操作分级鉴权（SslPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/ssl", async (string id, SslOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !SslPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for ssl op" }, statusCode: 403);
@@ -1011,15 +1011,15 @@ app.MapPost("/api/nodes/{id}/ssl", async (string id, SslOpRequest req, HttpConte
     try
     {
         var outcome = await bridge.DispatchAsync(id, "ssl.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
 app.MapPost("/api/nodes/{id}/db/grants", async (string id, DbGrantRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DbPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for db grant op" }, statusCode: 403);
@@ -1028,15 +1028,15 @@ app.MapPost("/api/nodes/{id}/db/grants", async (string id, DbGrantRequest req, H
     try
     {
         var outcome = await bridge.DispatchAsync(id, "db.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
 app.MapPost("/api/nodes/{id}/backup/policy", async (string id, BackupPolicyRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !BackupPolicyOps.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for backup policy op" }, statusCode: 403);
@@ -1045,15 +1045,15 @@ app.MapPost("/api/nodes/{id}/backup/policy", async (string id, BackupPolicyReque
     try
     {
         var outcome = await bridge.DispatchAsync(id, "backup.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
 app.MapPost("/api/nodes/{id}/files/edit", async (string id, FileEditRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
-    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    var roleStr = http.AuthRole();
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !FilesPolicy.Allows(req.Op ?? "", role))
     {
         return Results.Json(new { error = "insufficient role for files op" }, statusCode: 403);
@@ -1062,8 +1062,8 @@ app.MapPost("/api/nodes/{id}/files/edit", async (string id, FileEditRequest req,
     try
     {
         var outcome = await bridge.DispatchAsync(id, "files.manage", args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), roleStr,
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
@@ -1073,8 +1073,8 @@ app.MapPost("/api/nodes/{id}/cmd", async (string id, NodeCmdRequest req, HttpCon
     try
     {
         var outcome = await bridge.DispatchAsync(id, req.Command, req.Args, req.TimeoutMs,
-            http.Items["taoops.user"]?.ToString() ?? "", http.Items["taoops.role"]?.ToString() ?? "",
-            http.Connection.RemoteIpAddress?.ToString() ?? "");
+            http.AuthUser(), http.AuthRole(),
+            http.ClientIp());
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }

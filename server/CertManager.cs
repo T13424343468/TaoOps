@@ -55,8 +55,10 @@ public class CertManager
         var serial = RandomNumberGenerator.GetBytes(16);
         var generator = X509SignatureGenerator.CreateForRSA(rsa, RSASignaturePadding.Pkcs1);
         var certPub = req.Create(new X500DistinguishedName("CN=taoops-server"), generator, now, now.AddYears(10), serial);
-        var cert = certPub.CopyWithPrivateKey(rsa);
-        var pfx = cert.Export(X509ContentType.Pkcs12, PfxPassword);
-        return X509CertificateLoader.LoadPkcs12(pfx, PfxPassword);
+        // 直接返回 CopyWithPrivateKey 结果，不再经 LoadPkcs12 回读——回读会把私钥
+        // 装进 Windows 临时密钥库（CI/服务账户无用户配置文件），GetOrCreate 二次导出
+        // PFX 仍报 "Key not valid"（run 46039079141 抓出）。CopyWithPrivateKey 持有
+        // 独立内存副本，rsa 释放后仍可用。
+        return certPub.CopyWithPrivateKey(rsa);
     }
 }
