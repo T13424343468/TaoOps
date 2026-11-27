@@ -58,4 +58,4 @@ A → B1（回归修复）→ B2 → C → D → B3 → F → E。
 - G1 ✅ Windows 原型定版：安装向导 6 步（默认盘符 D、目录可改）+ 服务自启页 + 升级回滚页 + 完全卸载页，视觉评分 16 屏满分（草案口径），三视角评审有条件通过，老板 2026-11-27 拍板定版。
 - G2 ✅ 中控 Windows 支持（FR-A31，提交 43f91ff）：AddWindowsService 服务壳（服务名 TaoOps，Linux 不受影响）；数据目录平台化（Windows %ProgramData%\TaoOps\data）；界面自带托管（web/dist 随中控分发，静态+SPA 回退）。测试 770/770 全绿（新增 9 条平台测试）。
 - G3 ✅ 安装器与卸载脚本：installer/windows/taops.iss（默认 D:\Program Files\TaoOps 可改；装服务自启+防火墙放行；卸载六项全清：服务/自启/注册表/防火墙/文件/数据目录可选保留）+ scripts/publish-windows.sh 发布脚本。
-- G4 待办：Windows 真机验证（服务注册/自启/卸载残留核查）——需 Windows 环境，云测或老板提供机器后执行。
+- G4 ✅ Windows 真机验证（2026-11-28 收口，run 46060760859 全绿）：GitHub windows-latest 云端实弹——安装注册服务并自启（AUTOSTART-OK）、面板 HTTPS 可达（PANEL-OK status=200）、界面自带分发核查（BUNDLED-WEB-OK）、卸载六项全清+残留核查（UNINSTALL-CLEAN-OK：服务/注册表/防火墙无残留）。三轮实弹：run 46035064952 抓出 CertManager 私钥持久化缺陷（修：手动签发+CopyWithPrivateKey 内存持有，225fc8b）；run 46039079141 抓出 LoadPkcs12 回读后私钥进 Windows 临时密钥库二次导出仍报错（修：直接返回 CopyWithPrivateKey 结果，da3e14d）；run 46059798141 四项实过但收尾 netsh 无匹配规则退出码 1 假红（修：归零 LASTEXITCODE+exit 0，80669b9）。第四轮全绿清账。
