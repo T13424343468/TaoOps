@@ -14,7 +14,7 @@ public static class K8sPolicy
     public static UserRole RequiredRole(string op) => op switch
     {
         "clusters" or "nodes" or "workloads" or "pods" or "events" or "logs" or "version"
-            or "rollout_status" or "templates" => UserRole.ReadOnly,
+            or "rollout_status" or "templates" or "metrics" => UserRole.ReadOnly,
         "scale" or "restart" or "deploy" or "remove" or "add" or "remove_cluster" => UserRole.Admin,
         _ => UserRole.Admin,
     };

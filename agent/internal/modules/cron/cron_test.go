@@ -1,6 +1,7 @@
 package cron
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -164,5 +165,23 @@ func TestHandlerOps(t *testing.T) {
 	}
 	if _, err := h(map[string]any{"op": "remove", "name": "j1"}); err != nil {
 		t.Fatalf("remove: %v", err)
+	}
+}
+
+func TestHandlerListOutputJSON(t *testing.T) {
+	m, _ := newMgr(t, initialCrontab)
+	h := Handler(m)
+	res, err := h(map[string]any{"op": "list"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("list: %v %v", res, err)
+	}
+	var parsed struct {
+		Jobs []map[string]any `json:"jobs"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("list output must be JSON object, got %q: %v", res.Output, err)
+	}
+	if len(parsed.Jobs) != 1 || parsed.Jobs[0]["name"] != "nightly-backup" {
+		t.Fatalf("list output jobs mismatch: %v", parsed.Jobs)
 	}
 }

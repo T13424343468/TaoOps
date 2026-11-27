@@ -6,6 +6,7 @@ package db
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -214,7 +215,9 @@ func Handler(m *Manager) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"backups": files}}, nil
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			raw, _ := json.Marshal(files)
+			return registry.Result{ExitCode: 0, Output: string(raw), Data: map[string]any{"backups": files}}, nil
 		// FR-A15 replication ops (contract §13); MySQL only.
 		case "master_grant":
 			replicaHost, _ := args["replica_host"].(string)

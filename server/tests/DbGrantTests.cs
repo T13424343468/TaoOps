@@ -25,8 +25,8 @@ public class DbGrantPolicyTests
     [Fact]
     public void UnknownOp_DefaultsAdmin()
     {
-        Assert.Equal(UserRole.Admin, DbPolicy.RequiredRole("drop"));
-        Assert.False(DbPolicy.Allows("drop", UserRole.Operator));
+        Assert.Equal(UserRole.Admin, DbPolicy.RequiredRole("bogus_op"));
+        Assert.False(DbPolicy.Allows("bogus_op", UserRole.Operator));
     }
 
     [Fact]

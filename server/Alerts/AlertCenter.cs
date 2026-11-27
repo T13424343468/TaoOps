@@ -9,20 +9,35 @@ namespace TaoOps.Server.Alerts;
 /// </summary>
 public sealed class AlertCenter
 {
-    /// <summary>磁盘水位 critical 阈值（PRD 映射表：≥90%=critical）。</summary>
-    public const int DiskCriticalPct = 90;
-    /// <summary>迟滞复位阈值：回落到 85% 以下才允许再次边缘触发。</summary>
-    public const int DiskResetPct = 85;
+    /// <summary>磁盘水位 critical 阈值（PRD 映射表默认 90%；backlog F4 起可经设置页落盘调整）。</summary>
+    public const int DiskCriticalPctDefault = 90;
+    /// <summary>迟滞复位阈值：回落到 85% 以下才允许再次边缘触发（默认值）。</summary>
+    public const int DiskResetPctDefault = 85;
 
     private readonly AlertStore _store;
     private readonly ConcurrentDictionary<string, bool> _diskAlerted = new(StringComparer.Ordinal);
     /// <summary>critical 触发推送（FR-A20）：接线后异步触发，可为空（测试直构）。</summary>
     private readonly Push.PushDispatcher? _push;
+    /// <summary>阈值设置（backlog F4）：未接设置存储时用 PRD 默认值。</summary>
+    private readonly Settings.AlertThresholdSettings _thresholds;
 
-    public AlertCenter(AlertStore store, Push.PushDispatcher? push = null)
+    public AlertCenter(AlertStore store, Push.PushDispatcher? push = null, Settings.SettingsStore? settings = null)
     {
         _store = store;
         _push = push;
+        _thresholds = settings?.Load() ?? new Settings.AlertThresholdSettings();
+    }
+
+    /// <summary>当前生效阈值（设置页回显用）。</summary>
+    public int DiskCriticalPct => _thresholds.DiskCriticalPct;
+    public int DiskResetPct => _thresholds.DiskResetPct;
+
+    /// <summary>重载阈值（backlog F4：设置页保存后即时生效，无需重启）。</summary>
+    public void ReloadThresholds(Settings.SettingsStore settings)
+    {
+        var loaded = settings.Load();
+        _thresholds.DiskCriticalPct = loaded.DiskCriticalPct;
+        _thresholds.DiskResetPct = loaded.DiskResetPct;
     }
 
     /// <summary>统一告警入口：来源方直接落账；critical 触发推送（FR-A20 接线）。</summary>

@@ -22,6 +22,16 @@ public class DbPolicyTests
     [InlineData("replica_config", UserRole.Operator, false)]
     [InlineData("replica_reset", UserRole.Admin, true)]
     [InlineData("replica_reset", UserRole.ReadOnly, false)]
+    // backlog B2 切真：基础库操作矩阵（backups 只读；create/drop/backup/restore 限 Operator+）。
+    [InlineData("backups", UserRole.ReadOnly, true)]
+    [InlineData("backups", UserRole.Operator, true)]
+    [InlineData("create", UserRole.ReadOnly, false)]
+    [InlineData("create", UserRole.Operator, true)]
+    [InlineData("drop", UserRole.Operator, true)]
+    [InlineData("drop", UserRole.ReadOnly, false)]
+    [InlineData("backup", UserRole.Operator, true)]
+    [InlineData("restore", UserRole.Operator, true)]
+    [InlineData("restore", UserRole.Admin, true)]
     public void Matrix_MatchesContract(string op, UserRole role, bool expected)
     {
         Assert.Equal(expected, DbPolicy.Allows(op, role));
@@ -30,8 +40,8 @@ public class DbPolicyTests
     [Fact]
     public void UnknownOp_DefaultsAdmin()
     {
-        Assert.Equal(UserRole.Admin, DbPolicy.RequiredRole("create"));
-        Assert.False(DbPolicy.Allows("create", UserRole.Operator));
+        Assert.Equal(UserRole.Admin, DbPolicy.RequiredRole("bogus_op"));
+        Assert.False(DbPolicy.Allows("bogus_op", UserRole.Operator));
     }
 }
 

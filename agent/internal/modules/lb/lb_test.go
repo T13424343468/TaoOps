@@ -38,10 +38,13 @@ func TestAddAndList(t *testing.T) {
 		t.Fatalf("list: %v %v", res, err)
 	}
 	raw, _ := json.Marshal(res.Data["groups"])
-	var groups []Group
-	if json.Unmarshal(raw, &groups) != nil || len(groups) != 1 {
+	var wrapped struct {
+		Groups []Group `json:"groups"`
+	}
+	if json.Unmarshal(raw, &wrapped) != nil || len(wrapped.Groups) != 1 {
 		t.Fatalf("groups = %s", raw)
 	}
+	groups := wrapped.Groups
 	if groups[0].Backends[0].Weight != 50 || groups[0].Backends[0].HealthMode != "tcp" {
 		t.Fatalf("unexpected backend: %+v", groups[0].Backends[0])
 	}
@@ -198,5 +201,28 @@ func TestUnknownOp(t *testing.T) {
 	m, _ := newTestManager(t)
 	if _, err := run(m, map[string]any{"op": "nope"}); err == nil {
 		t.Fatal("expected unknown-op rejection")
+	}
+}
+
+func TestListOutputJSON(t *testing.T) {
+	m, _ := newTestManager(t)
+	if _, err := run(m, map[string]any{
+		"op": "add", "name": "web-pool", "host": "10.0.0.11", "port": 8080,
+		"health_mode": "tcp",
+	}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	res, err := run(m, map[string]any{"op": "list"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("list: %v %v", res, err)
+	}
+	var parsed struct {
+		Groups []Group `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("list output must be JSON array of groups, got %q: %v", res.Output, err)
+	}
+	if len(parsed.Groups) != 1 || parsed.Groups[0].Name != "web-pool" {
+		t.Fatalf("list output groups mismatch: %+v", parsed.Groups)
 	}
 }

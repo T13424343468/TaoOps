@@ -33,8 +33,11 @@ export default function WafPage() {
   const [msg, contextHolder] = message.useMessage();
 
   const load = useCallback(async () => {
-    setRules(await api<WafRule[]>("/api/waf/rules"));
-    setEvents(await api<unknown[]>("/api/waf/events"));
+    // 后端返回包装对象 { rules: [...], settings: {...}；兼容数组以防契约变更
+    const r = await api<WafRule[] | { rules?: WafRule[] }>("/api/waf/rules");
+    setRules(Array.isArray(r) ? r : Array.isArray(r?.rules) ? r.rules : []);
+    const ev = await api<unknown[] | { events?: unknown[] }>("/api/waf/events");
+    setEvents(Array.isArray(ev) ? ev : Array.isArray(ev?.events) ? ev.events : []);
   }, []);
 
   useEffect(() => { load().catch((e) => msg.error(`加载失败: ${e.message}`)); }, [load, msg]);

@@ -11,9 +11,10 @@ public sealed class MetricsStore
     /// <summary>单节点最大保留点数（24h × 60s）。</summary>
     public const int Capacity = 1440;
 
-    /// <summary>一个采样点（时间戳为 Unix 毫秒）。</summary>
+    /// <summary>一个采样点（时间戳为 Unix 毫秒；磁盘用量字段 FR-A29，0 表示数据不足）。</summary>
     public sealed record MetricPoint(long Ts, double CpuUsedPct, ulong MemTotalKB, ulong MemUsedKB,
-        ulong DiskReadBps, ulong DiskWriteBps, ulong NetRxTotal, ulong NetTxTotal);
+        ulong DiskReadBps, ulong DiskWriteBps, ulong NetRxTotal, ulong NetTxTotal,
+        ulong DiskUsedKB = 0, ulong DiskTotalKB = 0);
 
     private readonly ConcurrentDictionary<string, Queue<MetricPoint>> _buffers = new(StringComparer.Ordinal);
     private readonly object _lock = new();

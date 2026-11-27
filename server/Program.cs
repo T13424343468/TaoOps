@@ -8,6 +8,7 @@ using TaoOps.Server.Relay;
 using TaoOps.Server.Sec;
 using TaoOps.Server.Services;
 using TaoOps.Server.Services.K8s;
+using TaoOps.Server.Settings;
 using TaoOps.Server.Waf;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -16,6 +17,8 @@ builder.Services.AddSingleton<NodeRegistry>();
 builder.Services.AddSingleton<NodeCommandHub>();
 builder.Services.AddSingleton<NodeStreamHub>();
 builder.Services.AddSingleton<NodeCommandBridge>();
+// FR-A30 多机批量下发（PRD v1.4）。
+builder.Services.AddSingleton<BatchService>();
 
 // WAF 管理面（M3）：规则真源与事件账本落数据目录。
 var wafDataDir = Environment.GetEnvironmentVariable("TAOOPS_DATA_DIR") ?? "/var/lib/taoops/server";
@@ -42,13 +45,16 @@ builder.Services.AddSingleton<Push.PushChannelStore>(_ => new Push.PushChannelSt
 builder.Services.AddSingleton<Push.SsrfWhitelistStore>(_ => new Push.SsrfWhitelistStore(wafDataDir));
 builder.Services.AddSingleton<Push.PushLogStore>(_ => new Push.PushLogStore(wafDataDir));
 builder.Services.AddSingleton<Push.PushDispatcher>();
+// 系统设置存储（backlog F4）：告警阈值等落盘 dataDir/settings.json。
+builder.Services.AddSingleton<SettingsStore>(_ => new SettingsStore(wafDataDir));
 builder.Services.AddSingleton<AlertCenter>(sp =>
 {
     var push = new Push.PushDispatcher(
         sp.GetRequiredService<Push.PushChannelStore>(),
         sp.GetRequiredService<Push.SsrfWhitelistStore>(),
         sp.GetRequiredService<Push.PushLogStore>());
-    return new AlertCenter(sp.GetRequiredService<AlertStore>(), push);
+    return new AlertCenter(sp.GetRequiredService<AlertStore>(), push,
+        sp.GetRequiredService<SettingsStore>());
 });
 // FR-A15 复制中断巡检：60s 轮询在线节点 replica_status，中断/超阈值接告警中心。
 builder.Services.AddSingleton<ReplicationMonitor>(sp => new ReplicationMonitor(
@@ -80,6 +86,14 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<BackupScheduleMoni
 // FR-A23 资源实时监控：60s 对在线节点采样 sysinfo.overview op=metrics_sample，
 // 入内存环形缓冲（24h×60s=1440 点，不落盘重启清零），采样失败静默。
 builder.Services.AddSingleton<MetricsStore>();
+// FR-A29 AI 运维建议（PRD v1.4）：只读门面 + 规则引擎 + 外接模式。
+builder.Services.AddSingleton<AiAdviceExternal>(_ => new AiAdviceExternal(wafDataDir,
+    new AuditStore(wafDataDir)));
+builder.Services.AddSingleton<AdviceEngine>();
+builder.Services.AddSingleton<IAdviceDataSource>(sp => new DefaultAdviceDataSource(
+    sp.GetRequiredService<MetricsStore>(),
+    sp.GetRequiredService<AlertStore>(),
+    sp.GetRequiredService<NodeCommandBridge>()));
 builder.Services.AddSingleton<MetricsSampler>(sp => new MetricsSampler(
     sp.GetRequiredService<NodeCommandBridge>(),
     () => sp.GetRequiredService<NodeCommandBridge>().ListNodes().Select(n => (n.NodeId, n.CommandConnected)),
@@ -286,6 +300,52 @@ app.MapDelete("/api/auth/users/{username}", (string username, UserStore users) =
 app.MapGet("/api/auth/lockouts", (AuthService auth) =>
     Results.Json(auth.Lockouts(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())));
 
+// 修改自己密码（backlog F2）：旧密码校验 + 新密码落哈希；审计留痕不含密码内容。
+app.MapPost("/api/auth/change-password", (ChangePasswordRequest req, HttpContext http,
+    UserStore users, AuditStore audit) =>
+{
+    var username = http.Items["taoops.user"]?.ToString() ?? "";
+    var account = users.Find(username);
+    if (account is null) return Results.Json(new { error = "user not found" }, statusCode: 404);
+    if (!AuthService.VerifyPassword(req.OldPassword ?? "", account.PasswordHash))
+    {
+        audit.Append(new AuditEvent { User = username, Role = http.Items["taoops.role"]?.ToString() ?? "",
+            Action = "auth.change_password", Target = username,
+            Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "old_password_mismatch" });
+        return Results.Json(new { error = "旧密码不正确" }, statusCode: 400);
+    }
+    if (string.IsNullOrEmpty(req.NewPassword) || req.NewPassword.Length < 8)
+        return Results.Json(new { error = "新密码至少 8 位" }, statusCode: 400);
+    users.UpdatePasswordHash(username, AuthService.HashPassword(req.NewPassword));
+    audit.Append(new AuditEvent { User = username, Role = http.Items["taoops.role"]?.ToString() ?? "",
+        Action = "auth.change_password", Target = username,
+        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "", Result = "ok" });
+    return Results.Ok();
+});
+
+// 系统设置（backlog F4）：告警阈值可视化。GET 回显（登录即可），PUT 落盘（Admin only）。
+app.MapGet("/api/settings/alerts", (AlertCenter alerts) =>
+    Results.Json(new { disk_critical_pct = alerts.DiskCriticalPct, disk_reset_pct = alerts.DiskResetPct }));
+app.MapPut("/api/settings/alerts", (AlertThresholdSettings req, HttpContext http,
+    SettingsStore store, AlertCenter alerts, AuditStore audit) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || role != UserRole.Admin)
+        return Results.Json(new { error = "admin role required" }, statusCode: 403);
+    if (req.DiskCriticalPct is < 1 or > 99) return Results.Json(new { error = "disk_critical_pct 须在 1-99" }, statusCode: 400);
+    if (req.DiskResetPct is < 1 or > 99) return Results.Json(new { error = "disk_reset_pct 须在 1-99" }, statusCode: 400);
+    if (req.DiskResetPct >= req.DiskCriticalPct)
+        return Results.Json(new { error = "复位阈值须低于触发阈值（迟滞口径）" }, statusCode: 400);
+    store.Save(req);
+    alerts.ReloadThresholds(store);
+    audit.Append(new AuditEvent { User = http.Items["taoops.user"]?.ToString() ?? "", Role = roleStr,
+        Action = "settings.alerts", Target = "alert_thresholds",
+        Ip = http.Connection.RemoteIpAddress?.ToString() ?? "",
+        Result = $"critical={req.DiskCriticalPct} reset={req.DiskResetPct}" });
+    return Results.Json(new { disk_critical_pct = alerts.DiskCriticalPct, disk_reset_pct = alerts.DiskResetPct,
+        note = "阈值已落盘并即时生效" });
+});
+
 // ---- 审计（FR-D4：留痕/哈希链/查询/导出）----
 app.MapGet("/api/audit", (AuditStore store, string? user, long? from, long? to) =>
     Results.Json(store.Query(user, from, to)));
@@ -402,6 +462,112 @@ app.MapGet("/api/nodes/{id}/metrics", (string id, MetricsStore store, int? hours
     var since = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - h * 3_600_000L;
     return Results.Json(store.Query(id, since));
 });
+// FR-A29 AI 运维建议（PRD v1.4）：本地规则引擎按节点出建议；查看 ReadOnly 及以上。
+app.MapGet("/api/advice/{id}", async (string id, HttpContext http, AdviceEngine engine,
+    IAdviceDataSource source, SettingsStore settings) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.ReadOnly))
+        return Results.Json(new { error = "insufficient role" }, statusCode: 403);
+    var advices = await engine.AdviseAsync(id, settings.Load());
+    return Results.Json(new
+    {
+        node_id = id,
+        advices = advices.Select(a => new
+        {
+            id = a.Id, level = a.Level, title = a.Title,
+            basis = a.Basis, action_link = a.ActionLink, action_text = a.ActionText,
+        }),
+    });
+});
+
+// FR-A29 外接模式配置（Admin）：Key 不回显，只返回 has_key 状态。
+app.MapGet("/api/advice/external/config", (HttpContext http, AiAdviceExternal ext) =>
+{
+    var cfgRole = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(cfgRole, out var cfgParsed) || cfgParsed != UserRole.Admin)
+        return Results.Json(new { error = "admin only" }, statusCode: 403);
+    var (endpoint, hasKey, whitelist) = ext.LoadConfigSafe();
+    return Results.Json(new { endpoint, has_key = hasKey, ssrf_whitelist = whitelist });
+});
+app.MapPost("/api/advice/external/config", (ExternalConfigRequest req, HttpContext http, AiAdviceExternal ext) =>
+{
+    var saveRole = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(saveRole, out var saveParsed) || saveParsed != UserRole.Admin)
+        return Results.Json(new { error = "admin only" }, statusCode: 403);
+    try
+    {
+        ext.SaveConfig(new AiAdviceExternal.ExternalConfig(
+            req.Endpoint ?? "", req.ApiKey ?? "", req.SsrfWhitelist ?? []));
+        return Results.Json(new { ok = true });
+    }
+    catch (ArgumentException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: 400);
+    }
+});
+
+// FR-A29 深度分析（Operator+）：脱敏摘要发用户自备端点，返回纯文本。
+app.MapPost("/api/advice/{id}/analyze", async (string id, HttpContext http, AiAdviceExternal ext,
+    IAdviceDataSource source, AdviceEngine engine, SettingsStore settings) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.Operator))
+        return Results.Json(new { error = "insufficient role" }, statusCode: 403);
+    var user = http.Items["taoops.user"]?.ToString() ?? "";
+    var ip = http.Connection.RemoteIpAddress?.ToString() ?? "";
+
+    // 脱敏摘要：仅指标数值与规则标识（安全位评审口径——不含主机名/IP/节点名）。
+    var advices = await engine.AdviseAsync(id, settings.Load());
+    var summary = $"node metrics summary (anonymized):\n" +
+                  string.Join("\n", advices.Select(a => $"[{a.Level}] {a.Title}: {a.Basis}"));
+    if (advices.Count == 0) summary += "no local rule triggered; metrics within thresholds";
+
+    try
+    {
+        var text = await ext.AnalyzeAsync(id, summary, user, roleStr, ip);
+        return Results.Json(new { advice = text });
+    }
+    catch (AiAdviceExternal.AiExternalException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode);
+    }
+});
+
+// FR-A30 多机批量下发（PRD v1.4）：白名单逐 op 枚举纯只读；入口 Operator 及以上；
+// 服务端二次校验节点在线；限频/并发/截断在 BatchService 内。审计主+子记录进哈希链。
+app.MapPost("/api/batch", async (BatchOpRequest req, HttpContext http, BatchService batch) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !role.AtLeast(UserRole.Operator))
+    {
+        return Results.Json(new { error = "insufficient role for batch" }, statusCode: 403);
+    }
+    var args = (req.Args ?? []).Where(a => a is not null).Select(a => a!).ToList();
+    try
+    {
+        var result = await batch.RunAsync(req.Module ?? "", args, req.NodeIds ?? [],
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new
+        {
+            batch_id = result.BatchId,
+            module = result.Module,
+            success_count = result.SuccessCount,
+            failure_count = result.FailureCount,
+            nodes = result.Nodes.Select(n => new
+            {
+                node_id = n.NodeId, status = n.Status,
+                exit_code = n.ExitCode, output = n.Output, request_id = n.RequestId,
+            }),
+        });
+    }
+    catch (BatchService.BatchException ex)
+    {
+        return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode);
+    }
+});
+
 // FR-A11 Docker 专用端点：按操作分级鉴权（DockerPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/docker", async (string id, DockerOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
@@ -432,6 +598,78 @@ app.MapPost("/api/nodes/{id}/webstats", async (string id, WebStatsOpRequest req,
     try
     {
         var outcome = await bridge.DispatchAsync(id, "webstats.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// 主机防火墙端点（backlog F3）：按操作分级鉴权（FwPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/fw", async (string id, FwOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !FwPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for fw op" }, statusCode: 403);
+    }
+    var args = FwOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "fw.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// 防篡改状态端点（backlog F3）：status 只读，经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/tamperguard", async (string id, TamperGuardOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !TamperGuardPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for tamperguard op" }, statusCode: 403);
+    }
+    var args = new List<string> { $"op={req.Op}" };
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "tamper.guard", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// 计划任务专用端点（backlog B2 切真）：按操作分级鉴权（CronPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/cron", async (string id, CronOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !CronPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for cron op" }, statusCode: 403);
+    }
+    var args = CronOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "cron.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// 网站专用端点（backlog B2 切真）：按操作分级鉴权（SitePolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/site", async (string id, SiteOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !SitePolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for site op" }, statusCode: 403);
+    }
+    var args = SiteOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "site.manage", args, req.TimeoutMs,
             http.Items["taoops.user"]?.ToString() ?? "", roleStr,
             http.Connection.RemoteIpAddress?.ToString() ?? "");
         return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
@@ -542,6 +780,24 @@ app.MapGet("/api/k8s/{cluster}/pods", (string cluster, HttpContext http, K8sClus
     if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("pods", role))
         return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
     try { return Results.Json(svc.ListPods(cluster, ns ?? "")); }
+    catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
+    catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
+});
+// 集群健康总览（backlog C2）：全部集群节点/Pod 汇总，单集群巡检失败降级为 Error。
+app.MapGet("/api/k8s/health", (HttpContext http, K8sClusterService svc) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("nodes", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    return Results.Json(svc.Health());
+});
+// Pod 资源用量（backlog C1）：metrics.k8s.io 自定义 API，未装 metrics-server 时降级说明。
+app.MapGet("/api/k8s/{cluster}/metrics", async (string cluster, HttpContext http, K8sClusterService svc) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !K8sPolicy.Allows("metrics", role))
+        return Results.Json(new { error = "insufficient role for k8s op" }, statusCode: 403);
+    try { return Results.Json(await svc.PodMetricsAsync(cluster)); }
     catch (KeyNotFoundException) { return Results.Json(new { error = "cluster not found" }, statusCode: 404); }
     catch (Exception ex) { return Results.Json(new { error = ex.Message }, statusCode: 502); }
 });
@@ -668,6 +924,60 @@ app.MapPost("/api/nodes/{id}/db", async (string id, DbReplicaRequest req, HttpCo
     }
     catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
 });
+// 数据库基础操作专用端点（backlog B2 切真）：按操作分级鉴权（DbPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/db/ops", async (string id, DbOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !DbPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for db op" }, statusCode: 403);
+    }
+    var args = DbOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "db.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// FTP 专用端点（backlog B2 切真）：按操作分级鉴权（FtpPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/ftp", async (string id, FtpOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !FtpPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for ftp op" }, statusCode: 403);
+    }
+    var args = FtpOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "ftp.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
+// 环境变量（运行环境）专用端点（backlog B2 切真）：按操作分级鉴权（EnvPolicy），经下发桥审计留痕。
+app.MapPost("/api/nodes/{id}/env", async (string id, EnvOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
+{
+    var roleStr = http.Items["taoops.role"]?.ToString() ?? "";
+    if (!Enum.TryParse<UserRole>(roleStr, out var role) || !EnvPolicy.Allows(req.Op ?? "", role))
+    {
+        return Results.Json(new { error = "insufficient role for env op" }, statusCode: 403);
+    }
+    var args = EnvOpArgs.Build(req);
+    try
+    {
+        var outcome = await bridge.DispatchAsync(id, "env.manage", args, req.TimeoutMs,
+            http.Items["taoops.user"]?.ToString() ?? "", roleStr,
+            http.Connection.RemoteIpAddress?.ToString() ?? "");
+        return Results.Json(new { exit_code = outcome.ExitCode, output = outcome.Output, request_id = outcome.RequestId });
+    }
+    catch (BridgeException ex) { return Results.Json(new { error = ex.Message }, statusCode: ex.StatusCode); }
+});
 // FR-A21 SSL 证书端点：按操作分级鉴权（SslPolicy），经下发桥审计留痕。
 app.MapPost("/api/nodes/{id}/ssl", async (string id, SslOpRequest req, HttpContext http, NodeCommandBridge bridge) =>
 {
@@ -787,14 +1097,29 @@ public sealed record LoginRequest(string? Username, string? Password);
 public sealed record ToggleEnabled(bool Enabled);
 public sealed record BootstrapRequest(string? Username, string? Password);
 public sealed record CreateUserRequest(string? Username, string? Password, string? Role);
+public sealed record ChangePasswordRequest(string? OldPassword, string? NewPassword);
 public sealed record NodeCmdRequest(string? Command, IReadOnlyList<string>? Args, int TimeoutMs);
 
 // ---- FR-A11 Docker 下发请求（backlog A 增加速器/仓库登录字段）----
 public sealed record DockerOpRequest(string? Op, string? Name, string? Ref, string? Command, int? Tail,
     string? Addr, string? Registry, string? Username, string? Password, int TimeoutMs);
 
+// ---- FR-A30 多机批量下发请求 ----
+public sealed record BatchOpRequest(string? Module, IReadOnlyList<string?>? Args, IReadOnlyList<string>? NodeIds);
+
+// ---- FR-A29 外接模式配置请求 ----
+public sealed record ExternalConfigRequest(string? Endpoint, string? ApiKey, IReadOnlyList<string>? SsrfWhitelist);
+
 // ---- FR-A12 网站统计下发请求 ----
 public sealed record WebStatsOpRequest(string? Op, string? Site, string? Path, string? From, string? To, int TimeoutMs);
+
+// ---- 计划任务下发请求（backlog B2 切真）----
+public sealed record CronOpRequest(string? Op, string? Name, string? Schedule, string? Command, int TimeoutMs);
+public sealed record FwOpRequest(string? Op, int? Port, string? Proto, int TimeoutMs);
+public sealed record TamperGuardOpRequest(string? Op, int TimeoutMs);
+
+// ---- 网站下发请求（backlog B2 切真）----
+public sealed record SiteOpRequest(string? Op, string? Name, string? Domains, string? Proxy, int? Port, int TimeoutMs);
 
 // ---- FR-A14 一键迁移下发请求 ----
 public sealed record MigrateOpRequest(string? Op, string? SourcePath, string? TargetPath, string? Name,
@@ -859,6 +1184,45 @@ internal static class WebStatsOpArgs
         if (!string.IsNullOrEmpty(req.Path)) args.Add($"path={req.Path}");
         if (!string.IsNullOrEmpty(req.From)) args.Add($"from={req.From}");
         if (!string.IsNullOrEmpty(req.To)) args.Add($"to={req.To}");
+        return args;
+    }
+}
+
+internal static class CronOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(CronOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
+        if (!string.IsNullOrEmpty(req.Schedule)) args.Add($"schedule={req.Schedule}");
+        if (!string.IsNullOrEmpty(req.Command)) args.Add($"command={req.Command}");
+        return args;
+    }
+}
+
+internal static class FwOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(FwOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (req.Port is { } port) args.Add($"port={port}");
+        if (!string.IsNullOrEmpty(req.Proto)) args.Add($"proto={req.Proto}");
+        return args;
+    }
+}
+
+internal static class SiteOpArgs
+{
+    /// <summary>把请求字段摊平成 key=value 参数（Agent 侧 parseKeyValues 约定）。</summary>
+    public static IReadOnlyList<string> Build(SiteOpRequest req)
+    {
+        var args = new List<string> { $"op={req.Op}" };
+        if (!string.IsNullOrEmpty(req.Name)) args.Add($"name={req.Name}");
+        if (!string.IsNullOrEmpty(req.Domains)) args.Add($"domains={req.Domains}");
+        if (!string.IsNullOrEmpty(req.Proxy)) args.Add($"proxy={req.Proxy}");
+        if (req.Port is int port) args.Add($"port={port}");
         return args;
     }
 }

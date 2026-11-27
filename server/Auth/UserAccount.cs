@@ -15,6 +15,24 @@ public enum UserRole
 }
 
 /// <summary>
+/// 角色等级比较（单一正源）：Admin &gt; Operator &gt; ReadOnly。
+/// 枚举声明顺序不是权限高低，禁止对 UserRole 直接用 &lt;/&gt; 比较——
+/// 各策略的 Rank 表与本助手共用同一口径（分支账补齐批次二实拍抓出的缺陷修复）。
+/// </summary>
+public static class UserRoleExtensions
+{
+    private static readonly IReadOnlyDictionary<UserRole, int> Rank = new Dictionary<UserRole, int>
+    {
+        [UserRole.Admin] = 2,
+        [UserRole.Operator] = 1,
+        [UserRole.ReadOnly] = 0,
+    };
+
+    /// <summary>当前角色是否不低于最低要求（按 Admin&gt;Operator&gt;ReadOnly 口径）。</summary>
+    public static bool AtLeast(this UserRole role, UserRole min) => Rank[role] >= Rank[min];
+}
+
+/// <summary>
 /// 面板用户账号。口令只存 PBKDF2 哈希（A5），任何路径不落明文——
 /// 安全帽硬检查点：账本文件、日志、API 响应均无明文口令字段。
 /// </summary>

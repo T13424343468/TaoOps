@@ -548,6 +548,37 @@ func (m *Manager) audit(action, target, detail string) {
 	f.Write(append(b, '\n'))
 }
 
+// RestartSummary returns the total RestartCount across all containers
+// (FR-A29 AI advice data source). Read-only; audited.
+func (m *Manager) RestartSummary() (int, error) {
+	out, err := m.run("ps", "-aq", "--format", "{{json .}}")
+	if err != nil {
+		return 0, err
+	}
+	m.audit("inspect", "*", "")
+	total := 0
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var row struct {
+			ID string `json:"ID"`
+		}
+		if json.Unmarshal([]byte(line), &row) != nil || row.ID == "" {
+			continue
+		}
+		ro, re := m.run("inspect", "-f", "{{.RestartCount}}", row.ID)
+		if re != nil {
+			continue
+		}
+		if n, e := strconv.Atoi(strings.TrimSpace(ro)); e == nil {
+			total += n
+		}
+	}
+	return total, nil
+}
+
 // Handler returns the unified module handler for "docker.manage".
 func Handler(m *Manager) registry.Handler {
 	return func(args map[string]any) (registry.Result, error) {
@@ -559,7 +590,17 @@ func Handler(m *Manager) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"containers": list}}, nil
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			b, _ := json.Marshal(map[string]any{"containers": list})
+			return registry.Result{ExitCode: 0, Output: string(b), Data: map[string]any{"containers": list}}, nil
+		case "inspect":
+			total, err := m.RestartSummary()
+			if err != nil {
+				return registry.Result{ExitCode: 1}, err
+			}
+			// 结构化结果落 Output（FR-A17 约定）。
+			b, _ := json.Marshal(map[string]any{"total_restarts": total})
+			return registry.Result{ExitCode: 0, Output: string(b)}, nil
 		case "start", "stop", "restart":
 			if err := m.ContainerAction(op, name); err != nil {
 				return registry.Result{ExitCode: 1}, err
@@ -589,14 +630,17 @@ func Handler(m *Manager) registry.Handler {
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: "ok", Data: map[string]any{"images": list}}, nil
+			// 下发桥仅回传 Output：结构化结果按 FR-A17 约定落 Output JSON（Data 保留兼容）。
+			b, _ := json.Marshal(map[string]any{"images": list})
+			return registry.Result{ExitCode: 0, Output: string(b), Data: map[string]any{"images": list}}, nil
 		case "image_pull":
 			ref, _ := args["ref"].(string)
 			out, err := m.PullImage(ref)
 			if err != nil {
 				return registry.Result{ExitCode: 1}, err
 			}
-			return registry.Result{ExitCode: 0, Output: out}, nil
+			// backlog D1：拉取进度结构化——层数/字节进度落 Output JSON（raw 保留原文）。
+			return registry.Result{ExitCode: 0, Output: string(PullProgressJSON(out))}, nil
 		case "image_remove":
 			ref, _ := args["ref"].(string)
 			if err := m.RemoveImage(ref); err != nil {

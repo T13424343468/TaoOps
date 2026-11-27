@@ -59,8 +59,14 @@ export default function LbPage() {
     try {
       const r = await lbOp(id, { op: "list" });
       if (r.exit_code !== 0) { msg.error(r.output); return; }
-      // Agent 返回 data.groups；桥接层只回 output 时退化为空表。
-      const raw = (r as unknown as { groups?: LbGroup[] }).groups;
+      // 优先解析 Output JSON（FR-A17：下发桥仅回传 Output）；兼容旧 data.groups 字段。
+      let raw: LbGroup[] | undefined;
+      try {
+        const parsed = JSON.parse(r.output) as { groups?: LbGroup[] };
+        raw = parsed.groups;
+      } catch {
+        raw = (r as unknown as { groups?: LbGroup[] }).groups;
+      }
       setGroups(Array.isArray(raw) ? raw : []);
     } catch (e) {
       msg.error(`加载上游组失败：${(e as Error).message}`);

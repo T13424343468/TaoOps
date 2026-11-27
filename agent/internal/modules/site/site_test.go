@@ -1,6 +1,7 @@
 package site
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -123,5 +124,27 @@ func TestHandlerOps(t *testing.T) {
 	}
 	if _, err := h(map[string]any{"op": "delete", "name": "h1"}); err != nil {
 		t.Fatalf("delete via handler: %v", err)
+	}
+}
+
+// 下发桥仅回传 Output：list 结构化结果须落 Output JSON（FR-A17 约定）。
+func TestHandlerListOutputJSON(t *testing.T) {
+	m := newMgr(t)
+	h := Handler(m)
+	if _, err := h(map[string]any{"op": "create", "name": "h1", "domains": []any{"h.com"}}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	res, err := h(map[string]any{"op": "list"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("list: %v %v", res, err)
+	}
+	var parsed struct {
+		Sites []map[string]any `json:"sites"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsed); err != nil {
+		t.Fatalf("list output must be JSON object, got %q: %v", res.Output, err)
+	}
+	if len(parsed.Sites) != 1 || parsed.Sites[0]["name"] != "h1" {
+		t.Fatalf("list output sites mismatch: %v", parsed.Sites)
 	}
 }

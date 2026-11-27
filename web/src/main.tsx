@@ -5,6 +5,8 @@ import { ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import AppShell, { useAuthGate } from "./App";
 import LoginPage from "./pages/Login";
+import AiPage from "./pages/Ai";
+import NodesPage from "./pages/Nodes";
 import DashPage from "./pages/Dash";
 import WafPage from "./pages/Waf";
 import AuditPage from "./pages/Audit";
@@ -23,24 +25,29 @@ import AppDeployPage from "./pages/AppDeploy";
 import K8sPage from "./pages/K8s";
 import DockerPage from "./pages/Docker";
 import WebstatsPage from "./pages/Webstats";
-import ModulePage from "./pages/ModulePage";
-import {
-  AI_PAGE, CRON_PAGE, DB_PAGE, ENV_PAGE, FTP_PAGE,
-  NODES_PAGE, SITE_PAGE, UPGRADE_PAGE,
-} from "./pages/configs";
+import CronPage from "./pages/Cron";
+import SitePage from "./pages/Site";
+import DbPage from "./pages/Db";
+import FtpPage from "./pages/Ftp";
+import EnvPage from "./pages/Env";
+import UpgradePage from "./pages/Upgrade";
+import UsersPage from "./pages/Users";
+import FwPage from "./pages/Fw";
+import SettingsPage from "./pages/Settings";
+// FR-A29/A30：ai、nodes 两页切真（B3 收口），ModulePage 占位全部退役。
 
 const router = createHashRouter([
   { path: "/", element: <AppShell user={null!} onLogout={() => {}} />, children: [
     { path: "dash", element: <DashPage /> },
-    { path: "nodes", element: <ModulePage config={NODES_PAGE} /> },
+    { path: "nodes", element: <NodesPage /> },
     { path: "term", element: <TermPage /> },
     { path: "monitor", element: <MetricsPage /> },
-    { path: "site", element: <ModulePage config={SITE_PAGE} /> },
-    { path: "db", element: <ModulePage config={DB_PAGE} /> },
+    { path: "site", element: <SitePage /> },
+    { path: "db", element: <DbPage /> },
     { path: "files", element: <FilesPage /> },
-    { path: "ftp", element: <ModulePage config={FTP_PAGE} /> },
-    { path: "cron", element: <ModulePage config={CRON_PAGE} /> },
-    { path: "env", element: <ModulePage config={ENV_PAGE} /> },
+    { path: "ftp", element: <FtpPage /> },
+    { path: "cron", element: <CronPage /> },
+    { path: "env", element: <EnvPage /> },
     { path: "docker", element: <DockerPage /> },
     { path: "apps", element: <AppDeployPage /> },
     { path: "k8s", element: <K8sPage /> },
@@ -50,10 +57,13 @@ const router = createHashRouter([
     { path: "lb", element: <LbPage /> },
     { path: "ssl", element: <SslPage /> },
     { path: "waf", element: <WafPage /> },
+    { path: "fw", element: <FwPage /> },
+    { path: "users", element: <UsersPage /> },
+    { path: "settings", element: <SettingsPage /> },
     { path: "audit", element: <AuditPage /> },
     { path: "totp", element: <TotpPage /> },
-    { path: "ai", element: <ModulePage config={AI_PAGE} /> },
-    { path: "upgrade", element: <ModulePage config={UPGRADE_PAGE} /> },
+    { path: "ai", element: <AiPage /> },
+    { path: "upgrade", element: <UpgradePage /> },
     { path: "push", element: <PushPage /> },
     { path: "logclean", element: <LogCleanPage /> },
     { path: "db-replica", element: <DbReplicaPage /> },

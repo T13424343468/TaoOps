@@ -284,3 +284,34 @@ func TestAuditTrail(t *testing.T) {
 		t.Fatalf("audit entries = %+v", entries)
 	}
 }
+
+func TestHandlerListOutputJSON(t *testing.T) {
+	m := newTestManager(t, &fakeRunner{})
+	h := Handler(m)
+	res, err := h(map[string]any{"op": "templates"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("templates: %v %v", res, err)
+	}
+	var parsedT struct {
+		Templates []map[string]any `json:"templates"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsedT); err != nil {
+		t.Fatalf("templates output must be JSON object, got %q: %v", res.Output, err)
+	}
+	if len(parsedT.Templates) == 0 {
+		t.Fatal("templates output empty")
+	}
+	res, err = h(map[string]any{"op": "list"})
+	if err != nil || res.ExitCode != 0 {
+		t.Fatalf("list: %v %v", res, err)
+	}
+	var parsedA struct {
+		Apps []map[string]any `json:"apps"`
+	}
+	if err := json.Unmarshal([]byte(res.Output), &parsedA); err != nil {
+		t.Fatalf("list output must be JSON object, got %q: %v", res.Output, err)
+	}
+	if len(parsedA.Apps) != 0 {
+		t.Fatalf("list output apps mismatch: %v", parsedA.Apps)
+	}
+}

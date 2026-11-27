@@ -65,4 +65,15 @@ public sealed class UserStore
         if (removed) Save(users);
         return removed;
     }
+
+    /// <summary>更新密码哈希（backlog F2 修改自己密码）；用户不存在返回 false。</summary>
+    public bool UpdatePasswordHash(string username, string passwordHash)
+    {
+        var users = Load();
+        var account = users.FirstOrDefault(u => u.Username == username);
+        if (account is null) return false;
+        account.PasswordHash = passwordHash;
+        Save(users);
+        return true;
+    }
 }

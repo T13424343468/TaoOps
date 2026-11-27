@@ -35,6 +35,29 @@ interface ImageRow {
   created: string;
 }
 
+// backlog D1：拉取进度结构化（Output JSON）。
+interface PullLayer {
+  id: string;
+  status: string;
+  current_bytes?: number;
+  total_bytes?: number;
+}
+
+interface PullProgress {
+  layers: PullLayer[];
+  digest?: string;
+  status?: string;
+  raw?: string;
+}
+
+const fmtBytes = (b?: number) => {
+  if (b === undefined || b === null) return "-";
+  if (b >= 1_000_000_000) return `${(b / 1_000_000_000).toFixed(1)}GB`;
+  if (b >= 1_000_000) return `${(b / 1_000_000).toFixed(1)}MB`;
+  if (b >= 1_000) return `${(b / 1_000).toFixed(1)}kB`;
+  return `${b}B`;
+};
+
 async function dockerOp(nodeId: string, req: Record<string, unknown>): Promise<CmdOutcome> {
   return api<CmdOutcome>(`/api/nodes/${encodeURIComponent(nodeId)}/docker`, {
     method: "POST",
@@ -66,6 +89,8 @@ export default function DockerPage() {
   const [execOut, setExecOut] = useState("");
   const [loginForm] = Form.useForm();
   const [msg, contextHolder] = message.useMessage();
+  // backlog D1：拉取进度结构化展示。
+  const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
 
   const loadNodes = useCallback(async () => {
     const list = await api<NodeView[]>("/api/nodes");
@@ -196,8 +221,55 @@ export default function DockerPage() {
             value={pullRef}
             onChange={(e) => setPullRef(e.target.value)}
           />
-          <Button type="primary" disabled={busy || !pullRef.trim()} onClick={() => run({ op: "image_pull", ref: pullRef.trim() }, "拉取完成")}>拉取</Button>
+          <Button type="primary" disabled={busy || !pullRef.trim()} onClick={async () => {
+            setPullProgress(null);
+            if (!nodeId) { msg.warning("先选择节点"); return; }
+            setBusy(true);
+            try {
+              const r = await dockerOp(nodeId, { op: "image_pull", ref: pullRef.trim() });
+              if (r.exit_code !== 0) { msg.error(r.output); return; }
+              // backlog D1：Output 为结构化进度 JSON；旧版 Agent 原文输出降级为 raw 展示。
+              try {
+                const parsed = JSON.parse(r.output) as PullProgress;
+                setPullProgress(Array.isArray(parsed?.layers) ? parsed : { layers: [], raw: r.output, status: "拉取完成" });
+              } catch {
+                setPullProgress({ layers: [], raw: r.output, status: "拉取完成" });
+              }
+              msg.success("拉取完成");
+              await loadAll(nodeId);
+            } catch (e) {
+              msg.error(`操作失败：${(e as Error).message}`);
+            } finally { setBusy(false); }
+          }}>拉取</Button>
         </Space>
+        {pullProgress && (
+          <Alert
+            style={{ marginTop: 8 }}
+            type="success"
+            showIcon
+            message={`拉取进度：${pullProgress.status || "完成"}（${pullProgress.layers.length} 层）`}
+            description={
+              <div>
+                <Table
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  dataSource={pullProgress.layers}
+                  columns={[
+                    { title: "层", dataIndex: "id" },
+                    { title: "状态", dataIndex: "status" },
+                    {
+                      title: "进度",
+                      render: (_, l: PullLayer) =>
+                        l.total_bytes ? `${fmtBytes(l.current_bytes)} / ${fmtBytes(l.total_bytes)}` : "-",
+                    },
+                  ]}
+                />
+                {pullProgress.digest && <Typography.Text type="secondary">Digest: {pullProgress.digest}</Typography.Text>}
+              </div>
+            }
+          />
+        )}
         <Table
           rowKey={(r: ImageRow) => r.id + r.repo + r.tag}
           size="small"
