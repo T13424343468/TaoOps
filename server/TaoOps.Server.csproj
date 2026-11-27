@@ -7,15 +7,22 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
 
-  <ItemGroup>
-    <Compile Remove="tests/**" />
-  </ItemGroup>
+  <!--
+    嵌套 bin 目录根因修复：Web SDK 默认 Content 通配会把 tests/bin、tests/obj 下的产物
+    （deps.json、MvcTestingAppManifest.json 等）扫成内容项并标记 CopyToOutputDirectory，
+    每次构建再拷进 server/bin 下一层，层层嵌套。DefaultItemExcludes 将 tests/** 从
+    Compile/Content/None 等所有默认通配中整体排除，嵌套即停止生长。
+  -->
+  <PropertyGroup>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tests/**</DefaultItemExcludes>
+  </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Google.Protobuf" Version="3.27.3" />
     <PackageReference Include="Grpc.AspNetCore" Version="2.66.0" />
     <PackageReference Include="Grpc.Tools" Version="2.67.0" PrivateAssets="all" />
     <PackageReference Include="KubernetesClient" Version="17.0.14" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.0" />
   </ItemGroup>
 
   <ItemGroup>
