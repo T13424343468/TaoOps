@@ -572,6 +572,35 @@ public class Batch4Wave10Tests : IDisposable
     }
 
     [Fact]
+    public async Task ReplicationMonitor_PollOnce_ThreadDown_WithLastError_AppendsSuffix()
+    {
+        var store = new AlertStore(SubDir("repl-lag2"));
+        var monitor = new ReplicationMonitor(
+            bridge: new NodeCommandBridge(new NodeRegistry(), new NodeCommandHub(), new AuditStore(SubDir("repl-lag2-audit"))),
+            nodes: () => [("n1", true)],
+            alerts: new AlertCenter(store),
+            logger: NullLogger<ReplicationMonitor>.Instance,
+            interval: TimeSpan.FromMilliseconds(10),
+            dispatch: (_, _, _) => Task.FromResult(new NodeCommandBridge.CommandOutcome(0,
+                "{\"configured\":true,\"io_running\":\"No\",\"sql_running\":\"Yes\",\"seconds_behind_master\":10,\"last_error\":\"io hung\"}", "r1")));
+        await monitor.PollOnce();
+        var alert = Assert.Single(store.Query());
+        Assert.Contains("replication thread down", alert.Detail);
+        Assert.Contains("last_error=io hung", alert.Detail); // last_error 非空 → 带后缀臂
+    }
+
+    [Fact]
+    public async Task NodeCommandBridge_DispatchAsync_TimeOutOfRange_Throws()
+    {
+        var registry = new NodeRegistry();
+        var node = registry.Register(new RegisterRequest { AgentId = "a1", Hostname = "h1" });
+        var bridge = new NodeCommandBridge(registry, new NodeCommandHub(), new AuditStore(SubDir("bridge-timeout")));
+        var ex = await Assert.ThrowsAsync<BridgeException>(
+            () => bridge.DispatchAsync(node.NodeId, "uname", [], 300_001, "u", "Admin", ""));
+        Assert.Contains("out of range", ex.Message); // timeout > MaxTimeoutMs 臂
+    }
+
+    [Fact]
     public async Task NodeOfflineMonitor_ExecuteAsync_SwallowsPollErrors_UntilCancel()
     {
         var monitor = new NodeOfflineMonitor(
