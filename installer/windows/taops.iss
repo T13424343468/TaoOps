@@ -68,7 +68,7 @@ begin
       Exit;
     end;
     if Choice = IDYES then
-      RegWriteString(HKEY_LOCAL_MACHINE, 'SOFTWARE\TaoOps', 'DeleteDataOnUninstall', '1')
+      RegWriteStringValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\TaoOps', 'DeleteDataOnUninstall', '1')
     else
       RegDeleteValue(HKEY_LOCAL_MACHINE, 'SOFTWARE\TaoOps', 'DeleteDataOnUninstall');
   end;
