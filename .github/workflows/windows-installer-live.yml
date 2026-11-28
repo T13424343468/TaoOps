@@ -68,7 +68,22 @@ jobs:
               if ($res.StatusCode -eq 200) { $ok = $true; break }
             } catch { Write-Host "waiting: $_" }
           }
-          if (-not $ok) { throw "panel not reachable on 5241 after 60s" }
+          if (-not $ok) {
+            Write-Host "=== DIAGNOSTICS ==="
+            sc.exe query TaoOps
+            Get-CimInstance Win32_Service -Filter "Name='TaoOps'" | Format-List Name,State,ProcessId,StartMode,PathName | Out-String | Write-Host
+            Get-Process | Where-Object { $_.Name -like "*TaoOps*" } | Format-Table Id,Name,StartTime | Out-String | Write-Host
+            netstat -ano | Select-String "5241" | Out-String | Write-Host
+            Write-Host "--- curl https ---"
+            curl.exe -k -s -o NUL -w "https code=%{http_code}\n" --max-time 8 https://localhost:5241/ ; Write-Host "curl exit=$LASTEXITCODE"
+            Write-Host "--- curl http ---"
+            curl.exe -s -o NUL -w "http code=%{http_code}\n" --max-time 8 http://localhost:5241/ ; Write-Host "curl exit=$LASTEXITCODE"
+            Write-Host "--- event log ---"
+            Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-10)} -MaxEvents 40 -ErrorAction SilentlyContinue |
+              Where-Object { $_.Message -match "TaoOps|\.NET Runtime" } |
+              ForEach-Object { Write-Host "[$($_.TimeCreated)] $($_.ProviderName): $($_.Message)"; Write-Host "----" }
+            throw "panel not reachable on 5241 after 60s"
+          }
           Write-Host "PANEL-OK status=200"
           $qc = sc.exe qc TaoOps | Out-String
           if ($qc -notmatch "AUTO_START") { throw "service is not AUTO_START" }
