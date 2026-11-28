@@ -1,4 +1,4 @@
-; TaoOps Windows 版安装器（FR-A31，按定版原型 v1.3）
+﻿; TaoOps Windows 版安装器（FR-A31，按定版原型 v1.3）
 ; 默认目录 D:\Program Files\TaoOps（可改，输错路径由向导校验）
 ; 卸载完全清理：服务、自启、注册表、防火墙规则、程序文件；数据目录可选保留。
 
@@ -59,7 +59,7 @@ begin
   if DirExists(DataDir) and (not UninstallSilent()) then
   begin
     Choice := MsgBox('是否同时删除历史数据目录？' #13#10 +
-      DataDir #13#10 #13#10 +
+      DataDir + #13#10#13#10 +
       '【是】完全清除（不可恢复）    【否】保留数据，重装后接着用',
       mbConfirmation, MB_YESNOCANCEL);
     if Choice = IDCANCEL then
