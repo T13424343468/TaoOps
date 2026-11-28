@@ -48,13 +48,15 @@ Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""TaoO
 
 [Code]
 // 卸载前询问：数据目录删不删（原型定版口径：想留历史数据就保留）
+// 静默卸载（/SILENT、/VERYSILENT）不弹窗，默认保留数据目录——无界面可问，取保守策略；
+// 要删数据请走交互式卸载选「是」。
 function InitializeUninstall(): Boolean;
 var
   DataDir: string;
   Choice: Integer;
 begin
   DataDir := ExpandConstant('{commonappdata}') + '\TaoOps\data';
-  if DirExists(DataDir) then
+  if DirExists(DataDir) and (not UninstallSilent()) then
   begin
     Choice := MsgBox('是否同时删除历史数据目录？' #13#10 +
       DataDir #13#10 #13#10 +

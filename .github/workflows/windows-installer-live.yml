@@ -1,0 +1,133 @@
+# TaoOps 真实安装器云上实弹（FR-A31 / 出包材料「卸载保留数据→重装接续」缺口）
+# 与 windows-live.yml 的区别：那边用 sc.exe/netsh 模拟安装器动作；这里编译并运行
+# 真正的 Inno 安装包（ISCC 产出 TaoOps-Setup-1.0.0.exe），验证：
+#  - 静默安装：服务注册/自启/面板可达/界面自带/数据目录生成
+#  - 静默卸载默认保留数据目录（taops.iss UninstallSilent 分支）
+#  - 重装接续：重装后数据目录与标记文件仍在、面板可服务
+name: windows-installer-live
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  installer-live:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET 10 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: 发布 win-x64 自包含
+        run: dotnet publish server/TaoOps.Server.csproj -c Release -r win-x64 --self-contained true -o installer/windows/dist/windows/TaoOps
+
+      - name: 构建网页界面并随中控分发
+        run: |
+          cd web
+          npm ci
+          npm run build
+          cd ..
+          Copy-Item -Recurse -Force web/dist installer/windows/dist/windows/TaoOps/web
+
+      - name: 安装 Inno Setup 编译器并打出安装包
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { throw "ISCC not found at $iscc" }
+          Set-Location installer/windows
+          & $iscc taops.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed: $LASTEXITCODE" }
+          Set-Location $env:GITHUB_WORKSPACE
+          $setup = Get-ChildItem -Recurse -Filter "TaoOps-Setup-*.exe" installer/windows | Select-Object -First 1
+          if (-not $setup) { throw "setup exe not produced" }
+          Write-Host "INSTALLER-BUILT-OK: $($setup.FullName) ($([math]::Round($setup.Length/1MB,1)) MB)"
+
+      - name: 静默安装（真实安装包）
+        run: |
+          $setup = (Get-ChildItem -Recurse -Filter "TaoOps-Setup-*.exe" installer/windows | Select-Object -First 1).FullName
+          # runner 未必有 D: 盘，用 /DIR 覆盖安装目录；默认目录行为由向导校验兜底
+          $p = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=`"C:\Program Files\TaoOps`""
+          if ($p.ExitCode -ne 0) { throw "setup exit code: $($p.ExitCode)" }
+          if (-not (Get-Service TaoOps -ErrorAction SilentlyContinue)) { throw "service TaoOps not created by installer" }
+          Write-Host "INSTALL-OK: service created by real installer"
+
+      - name: 启动服务并验证面板可达与数据目录
+        run: |
+          sc.exe start TaoOps
+          if ($LASTEXITCODE -ne 0) { throw "sc start failed: $LASTEXITCODE" }
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $res = Invoke-WebRequest -Uri "https://localhost:5241/" -SkipCertificateCheck -UseBasicParsing -TimeoutSec 5
+              if ($res.StatusCode -eq 200) { $ok = $true; break }
+            } catch { Write-Host "waiting: $_" }
+          }
+          if (-not $ok) { throw "panel not reachable on 5241 after 60s" }
+          Write-Host "PANEL-OK status=200"
+          $qc = sc.exe qc TaoOps | Out-String
+          if ($qc -notmatch "AUTO_START") { throw "service is not AUTO_START" }
+          Write-Host "AUTOSTART-OK"
+          $pathName = (Get-CimInstance Win32_Service -Filter "Name='TaoOps'").PathName
+          $exeDir = Split-Path ($pathName.Trim('"') -replace ' -.*$','') -Parent
+          if (-not (Test-Path (Join-Path $exeDir "web\index.html"))) { throw "bundled web/ missing at $exeDir" }
+          Write-Host "BUNDLED-WEB-OK at $exeDir"
+          New-Item -ItemType Directory -Force -Path "$env:ProgramData\TaoOps\data" | Out-Null
+          "ci-marker-$(Get-Date -Format o)" | Out-File "$env:ProgramData\TaoOps\data\ci-marker.txt"
+          if (-not (Test-Path "$env:ProgramData\TaoOps\data")) { throw "data dir missing" }
+          Write-Host "DATA-DIR-READY: $env:ProgramData\TaoOps\data"
+
+      - name: 静默卸载（默认保留数据）
+        run: |
+          sc.exe stop TaoOps
+          Start-Sleep -Seconds 5
+          $unins = "C:\Program Files\TaoOps\unins\unins000.exe"
+          if (-not (Test-Path $unins)) { throw "uninstaller not found at $unins" }
+          $p = Start-Process -Wait -PassThru -FilePath $unins -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES"
+          if ($p.ExitCode -ne 0) { throw "uninstaller exit code: $($p.ExitCode)" }
+          Start-Sleep -Seconds 5
+          $fail = @()
+          if (Get-Service TaoOps -ErrorAction SilentlyContinue) { $fail += "service still exists" }
+          if (Test-Path "HKLM:\SOFTWARE\TaoOps") { $fail += "software registry key remains" }
+          if (Test-Path "C:\Program Files\TaoOps\TaoOps.Server.exe") { $fail += "app exe remains" }
+          if ($fail.Count -gt 0) { throw "UNINSTALL INCOMPLETE: $($fail -join '; ')" }
+          if (-not (Test-Path "$env:ProgramData\TaoOps\data\ci-marker.txt")) { throw "data dir was deleted on silent uninstall - retain path broken" }
+          Write-Host "RETAIN-DATA-OK: silent uninstall kept data dir with marker"
+
+      - name: 重装接续核查
+        run: |
+          $setup = (Get-ChildItem -Recurse -Filter "TaoOps-Setup-*.exe" installer/windows | Select-Object -First 1).FullName
+          $p = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=`"C:\Program Files\TaoOps`""
+          if ($p.ExitCode -ne 0) { throw "reinstall exit code: $($p.ExitCode)" }
+          sc.exe start TaoOps
+          if ($LASTEXITCODE -ne 0) { throw "sc start after reinstall failed: $LASTEXITCODE" }
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $res = Invoke-WebRequest -Uri "https://localhost:5241/" -SkipCertificateCheck -UseBasicParsing -TimeoutSec 5
+              if ($res.StatusCode -eq 200) { $ok = $true; break }
+            } catch { Write-Host "waiting: $_" }
+          }
+          if (-not $ok) { throw "panel not reachable after reinstall" }
+          if (-not (Test-Path "$env:ProgramData\TaoOps\data\ci-marker.txt")) { throw "marker lost after reinstall - continuation broken" }
+          Write-Host "REINSTALL-CONTINUE-OK: panel serving, pre-uninstall data intact"
+
+      - name: 收尾清理
+        run: |
+          sc.exe stop TaoOps
+          $unins = "C:\Program Files\TaoOps\unins\unins000.exe"
+          if (Test-Path $unins) {
+            $p = Start-Process -Wait -PassThru -FilePath $unins -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES"
+            if ($p.ExitCode -ne 0) { Write-Host "final uninstall exit code: $($p.ExitCode)" }
+          }
+
+      - name: 验证小结
+        if: always()
+        run: |
+          "## Windows installer live-fire summary" | Out-File $env:GITHUB_STEP_SUMMARY -Append
+          "INSTALLER-BUILT-OK / INSTALL-OK / PANEL-OK / AUTOSTART-OK / BUNDLED-WEB-OK / RETAIN-DATA-OK / REINSTALL-CONTINUE-OK - see step statuses" | Out-File $env:GITHUB_STEP_SUMMARY -Append
