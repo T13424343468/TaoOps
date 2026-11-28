@@ -58,7 +58,8 @@ jobs:
       - name: 启动服务并验证面板可达与数据目录
         run: |
           sc.exe start TaoOps
-          if ($LASTEXITCODE -ne 0) { throw "sc start failed: $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1056) { throw "sc start failed: $LASTEXITCODE" }
+          if ($LASTEXITCODE -eq 1056) { Write-Host "SERVICE-ALREADY-RUNNING (installer auto-started it)" }
           $ok = $false
           for ($i = 0; $i -lt 30; $i++) {
             Start-Sleep -Seconds 2
@@ -104,7 +105,8 @@ jobs:
           $p = Start-Process -Wait -PassThru -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=`"C:\Program Files\TaoOps`""
           if ($p.ExitCode -ne 0) { throw "reinstall exit code: $($p.ExitCode)" }
           sc.exe start TaoOps
-          if ($LASTEXITCODE -ne 0) { throw "sc start after reinstall failed: $LASTEXITCODE" }
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1056) { throw "sc start after reinstall failed: $LASTEXITCODE" }
+          if ($LASTEXITCODE -eq 1056) { Write-Host "SERVICE-ALREADY-RUNNING after reinstall" }
           $ok = $false
           for ($i = 0; $i -lt 30; $i++) {
             Start-Sleep -Seconds 2
